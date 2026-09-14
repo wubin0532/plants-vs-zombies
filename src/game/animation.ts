@@ -15,8 +15,9 @@ export const motionSheet = (id: string) =>
     : { frameWidth: 192, frameHeight: 256 };
 export function chomperFrame(p: Plant) {
   if (p.chomp) return 4 + Math.min(3, Math.floor((p.chomp.elapsed / 0.6) * 4));
-  if (p.timer > 0.6) return 8 + (Math.floor(p.age * 6) % 4);
-  if (p.timer > 0)
+  if (p.digest !== undefined && p.digest > 0)
+    return 8 + (Math.floor(p.digest * 6) % 4);
+  if (p.timer > 0 && p.timer <= 0.6)
     return 12 + Math.min(3, Math.floor(((0.6 - p.timer) / 0.6) * 4));
   return Math.floor(p.age * 4) % 4;
 }
@@ -58,9 +59,9 @@ export function zombieFrame(z: Zombie, natural = zombieAppearance(z).natural) {
   }
   if (z.id === "pole") {
     if (z.jump)
-      return (
-        8 + Math.min(3, Math.floor((z.jump.elapsed / z.jump.duration) * 4))
-      );
+      return z.jump.kind === "vault"
+        ? 8 + Math.min(3, Math.floor((z.jump.elapsed / z.jump.duration) * 4))
+        : (z.jumped ? 12 : 0) + (Math.floor(z.motion / 2.6) % 8);
     if (z.action === "eat")
       return 20 + (Math.floor((z.actionTime ?? z.age) * 6) % 4);
     return (z.jumped ? 12 : 0) + (Math.floor(z.motion / 2.6) % 8);
@@ -74,9 +75,9 @@ export function zombieFrame(z: Zombie, natural = zombieAppearance(z).natural) {
     : Math.floor(z.motion / 2.6) % 8;
 }
 export function jumpHeight(z: Zombie) {
-  return z.jump
-    ? Math.sin((Math.PI * z.jump.elapsed) / z.jump.duration) * 46
-    : 0;
+  if (!z.jump) return 0;
+  const p = z.jump.elapsed / z.jump.duration;
+  return (z.jump.fromHeight ?? 0) * (1 - p) + Math.sin(Math.PI * p) * 46;
 }
 /** Bake articulated walking/eating poses from the PNG torso and leg regions. */
 export function bakeZombie(scene: Phaser.Scene, id: string) {

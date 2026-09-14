@@ -103,8 +103,8 @@ export function makeWaves(
       1,
       Math.round(
         (2 + level.world * 0.7 + level.stage * 0.18) *
-          (0.65 + progress * 0.9) *
-          (wave >= n - 2 ? 1.5 : 1) *
+          (0.6 + progress * 0.7 + progress * progress * 0.6) *
+          (wave >= n - 3 ? 1.6 : 1) *
           settings.density,
       ),
     );

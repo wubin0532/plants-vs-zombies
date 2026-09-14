@@ -1,3 +1,4 @@
+import { isMushroom } from "./content";
 export type SoundKind =
   | "smash"
   | "chomp"
@@ -24,7 +25,10 @@ export type SoundKind =
   | "freeze"
   | "mower"
   | "jump"
-  | "shovel";
+  | "shovel"
+  | "warning"
+  | "horn"
+  | "danger";
 export type SoundEvent = { kind: SoundKind; x?: number; source?: string };
 /** Synthesized PCM and pitched voices: no network, no autoplay dependency. */
 export class GardenAudio {
@@ -45,6 +49,8 @@ export class GardenAudio {
   private duckUntil = 0;
   private buses = new Map<GainNode, { level: number; important: boolean }>();
   private variant = 0;
+  private sunStreak = 0;
+  private lastSun = -10;
   update(time: number, pressure: number) {
     this.pressure = pressure;
     const beat = Math.floor(time / (pressure > 0.6 ? 0.4 : 0.6));
@@ -146,6 +152,7 @@ export class GardenAudio {
       "lose",
       "mower",
       "smash",
+      "horn",
     ].includes(kind);
     if (now - (this.last.get(key) ?? -Infinity) < gap) return;
     if (this.voices.size >= 36) {
@@ -190,6 +197,11 @@ export class GardenAudio {
     bus.connect(pan);
     pan.connect(this.master!);
     const variation = [0.95, 1.03, 0.99, 1.06, 1][this.variant++ % 5];
+    if (kind === "sun") {
+      this.sunStreak =
+        now - this.lastSun < 1.5 ? Math.min(5, this.sunStreak + 1) : 0;
+      this.lastSun = now;
+    }
     let end = 0.2;
     const voice = (
       freq: number,
@@ -286,8 +298,12 @@ export class GardenAudio {
             ? [130.81, 155.56, 196, 233.08, 196, 155.56, 146.83, 174.61]
             : [196, 246.94, 293.66, 329.63, 293.66, 246.94, 220, 164.81];
         const note = notes[this.musicBeat % notes.length] || 196;
-        voice(note, note, 0.5, 0.075, "triangle");
-        voice(note / 2, note / 2, 0.6, 0.05);
+        const peak = this.pressure > 0.85;
+        const melody = peak ? note * 2 : note;
+        voice(melody, melody, 0.5, 0.075, "triangle");
+        if (peak) voice(melody * 1.5, melody * 1.5, 0.45, 0.04, "triangle");
+        voice(note / 2, note / 2, 1.2, 0.045);
+        if (this.pressure > 0.6) noise(0.09, 200, 0.3);
         break;
       }
       case "ambient":
@@ -371,16 +387,42 @@ export class GardenAudio {
         voice(180, 700, 0.26, 0.17, "triangle");
         break;
       case "plant":
-        noise(0.16, 440, 0.28);
-        voice(230, 105, 0.14, 0.16);
+        if (source && isMushroom(source)) {
+          voice(150, 62, 0.22, 0.13);
+          noise(0.2, 320, 0.11);
+        } else if (["wallnut", "tallnut", "pumpkin"].includes(source || "")) {
+          voice(95, 42, 0.2, 0.22);
+          noise(0.13, 250, 0.18);
+        } else {
+          noise(0.16, 440, 0.28);
+          voice(230, 105, 0.14, 0.16);
+          if (["cherry", "jalapeno", "doom"].includes(source || ""))
+            noise(0.5, 5200, 0.05, 0.08);
+        }
         break;
       case "shovel":
         noise(0.15, 2400, 0.22);
         voice(480, 120, 0.12, 0.1, "triangle");
         break;
-      case "sun":
-        voice(880, 880, 0.2, 0.12);
-        voice(1320, 1320, 0.24, 0.11, "sine", 0.09);
+      case "sun": {
+        const pitch = Math.pow(2, this.sunStreak / 12);
+        voice(880 * pitch, 880 * pitch, 0.2, 0.12);
+        voice(1320 * pitch, 1320 * pitch, 0.24, 0.11, "sine", 0.09);
+        break;
+      }
+      case "warning":
+        voice(740, 740, 0.13, 0.14, "square");
+        voice(554, 554, 0.15, 0.14, "square", 0.15);
+        voice(740, 740, 0.13, 0.12, "square", 0.32);
+        break;
+      case "horn":
+        voice(98, 196, 0.8, 0.22, "sawtooth");
+        voice(147, 294, 0.75, 0.1, "sawtooth", 0.05);
+        noise(0.5, 300, 0.08);
+        break;
+      case "danger":
+        voice(130, 110, 0.18, 0.2, "sawtooth");
+        voice(130, 96, 0.22, 0.2, "sawtooth", 0.26);
         break;
       case "win":
         [523, 659, 784, 1046].forEach((f, i) =>

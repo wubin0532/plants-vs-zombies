@@ -17,6 +17,7 @@ export type RenderOptions = {
   audio?: GardenAudio;
   quality?: () => string;
   shake?: () => boolean;
+  contrast?: () => boolean;
 };
 import { Engine } from "./engine";
 
@@ -29,8 +30,9 @@ export class GardenScene extends Phaser.Scene {
   graphics!: Phaser.GameObjects.Graphics;
   fog!: Phaser.GameObjects.Graphics;
   hover!: Phaser.GameObjects.Rectangle;
+  ghost!: Phaser.GameObjects.Image;
   acc = 0;
-  previous = new Map<number, { x: number; row: number }>();
+  previous = new Map<number, { x: number; row: number; h: number }>();
   notify: () => void;
   lastNotify = 0;
   options: RenderOptions;
@@ -118,16 +120,29 @@ export class GardenScene extends Phaser.Scene {
       .setStrokeStyle(2, 0xfff1b0, 0.8)
       .setVisible(false)
       .setDepth(101);
+    this.ghost = this.add
+      .image(0, 0, "pea")
+      .setAlpha(0.5)
+      .setOrigin(0.5, 0.95)
+      .setDisplaySize(86, 86)
+      .setVisible(false)
+      .setDepth(100);
     this.input.on("pointermove", (p: Phaser.Input.Pointer) => {
       const { col: c, row: r } = cellAt(p.x, p.y, this.engine.level.rows);
-      this.hover.setVisible(
-        c >= 0 &&
-          c < 9 &&
-          r >= 0 &&
-          r < this.engine.level.rows &&
-          !!this.engine.selected,
-      );
+      const inLawn =
+        c >= 0 && c < 9 && r >= 0 && r < this.engine.level.rows;
+      const id = this.engine.selected;
+      this.hover.setVisible(inLawn && !!id);
       this.hover.setPosition(this.x(c), this.y(r));
+      if (inLawn && id && id !== "shovel" && plantById[id]) {
+        this.ghost
+          .setTexture(id === "chomper" ? "chomper-motion" : id)
+          .setPosition(this.x(c), feetY(r, this.engine.level.rows))
+          .setVisible(true);
+        if (id === "chomper") this.ghost.setFrame(0);
+        if (this.engine.canPlant(id, r, c)) this.ghost.clearTint();
+        else this.ghost.setTint(0xe05545);
+      } else this.ghost.setVisible(false);
     });
     this.input.mouse?.disableContextMenu();
     this.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
@@ -135,6 +150,7 @@ export class GardenScene extends Phaser.Scene {
         this.engine.selected = "";
         this.engine.cannon = 0;
         this.hover.setVisible(false);
+        this.ghost.setVisible(false);
         this.notify();
         return;
       }
@@ -146,6 +162,7 @@ export class GardenScene extends Phaser.Scene {
       );
       if (token) {
         this.engine.collect(token.uid);
+        this.notify();
         return;
       }
       if (this.engine.level.mode === "whack") {
@@ -160,7 +177,7 @@ export class GardenScene extends Phaser.Scene {
         }
       }
       const { row, col } = cellAt(p.x, p.y, this.engine.level.rows);
-      this.engine.click(row, col);
+      this.engine.click(row, col, (p.event as MouseEvent).shiftKey);
     });
   }
   sprite(
@@ -190,11 +207,16 @@ export class GardenScene extends Phaser.Scene {
   update(_time: number, delta: number) {
     if (!this.graphics) return;
     const e = this.engine;
-    this.acc += Math.min(delta / 1000, 0.1);
+    if (e.hitStop > 0) e.hitStop = Math.max(0, e.hitStop - delta / 1000);
+    else
+      this.acc +=
+        Math.min(delta / 1000, 0.1) *
+        e.timeScale *
+        (e.winDelay >= 0 ? 0.3 : 1);
     while (this.acc >= 1 / 60) {
       this.previous.clear();
       for (const z of e.zombies)
-        this.previous.set(z.uid, { x: z.x, row: z.row });
+        this.previous.set(z.uid, { x: z.x, row: z.row, h: jumpHeight(z) });
       e.step(1 / 60);
       this.acc -= 1 / 60;
     }
@@ -210,6 +232,7 @@ export class GardenScene extends Phaser.Scene {
     if (!e.paused && e.status === "playing")
       this.options.audio?.update(e.time, e.zombies.length / 18);
     this.wasPaused = e.paused || e.status !== "playing";
+    if (this.ghost.visible && !e.selected) this.ghost.setVisible(false);
     if (_time - this.lastNotify > 80) {
       this.notify();
       this.lastNotify = _time;
@@ -271,7 +294,7 @@ export class GardenScene extends Phaser.Scene {
       const obj = this.sprite(
         key,
         p.id === "chomper" ? "chomper-motion" : p.id,
-        this.x(p.col),
+        this.x(p.col) + (p.hurt ? Math.sin(p.hurt * 65) * 3 : 0),
         feetY(p.row, e.level.rows) - (base ? 0 : 0),
         (base ? 90 : 86) * bodyScale,
         (base ? 45 : 86) * bodyScale,
@@ -344,7 +367,10 @@ export class GardenScene extends Phaser.Scene {
         ? z.laneChange.from +
           (z.row - z.laneChange.from) * Math.min(1, z.laneChange.elapsed / 0.6)
         : z.row;
-      const jump = jumpHeight(z),
+      const currentJump = jumpHeight(z);
+      const jump = previous
+          ? previous.h + (currentJump - previous.h) * blend
+          : currentJump,
         foot = feetY(renderRow, e.level.rows) - jump;
       const obj = this.sprite(
         key,
@@ -364,11 +390,17 @@ export class GardenScene extends Phaser.Scene {
       obj.setTint(
         z.freeze > 0
           ? 0x9edbec
-          : z.slow > 0
-            ? 0xc3e6ed
-            : z.ally
-              ? 0xe0b0ed
-              : 0xffffff,
+          : z.golden
+            ? 0xffd94d
+            : z.slow > 0
+              ? this.options.contrast?.()
+                ? 0x2e6f8e
+                : 0xc3e6ed
+              : z.ally
+                ? 0xe0b0ed
+                : (z.boost ?? 1) > 1
+                  ? 0xff9d8a
+                  : 0xffffff,
       );
       if (z.flying) obj.y -= 17;
       if (!z.underground) {
@@ -553,6 +585,18 @@ export class GardenScene extends Phaser.Scene {
       } else if (fx.type === "spore") {
         frame = 9;
         size = 170;
+      } else if (fx.type === "fly") {
+        // Sun/coin icon accelerating toward the seed-tray corner.
+        const ease = t * t;
+        const flyX = x + (60 - x) * ease,
+          flyY = y + (14 - y) * ease - Math.sin(Math.PI * t) * 46;
+        g.fillStyle(fx.source === "coin" ? 0xe8b04b : 0xffd94d, 1 - t * 0.4);
+        g.fillCircle(flyX, flyY, 12);
+        if (fx.source === "coin") {
+          g.fillStyle(0xb9832e, 1 - t * 0.4);
+          g.fillCircle(flyX, flyY, 7);
+        }
+        continue;
       } else if (fx.type === "death" && fx.source) {
         keep.add(key);
         if (fx.zombie) {
@@ -563,7 +607,7 @@ export class GardenScene extends Phaser.Scene {
             key,
             appearance.texture,
             x,
-            feetY(fx.row, e.level.rows) + t * 8,
+            feetY(fx.row, e.level.rows) + t * 8 - (fx.height ?? 0) * (1 - t),
             appearance.width * scale,
             appearance.height * scale,
             5 + fx.row * 10,
@@ -616,7 +660,18 @@ export class GardenScene extends Phaser.Scene {
             .setAngle(i * 60 + t * 90);
         }
     }
-    for (let r = 0; r < e.level.rows; r++)
+    for (let r = 0; r < e.level.rows; r++) {
+      if (e.spareMowers[r]) {
+        const x = BOARD.mowerX,
+          y = this.y(r) - 8;
+        g.fillStyle(0x526b4c);
+        g.fillRoundedRect(x - 12, y - 10, 24, 14, 4);
+        g.fillStyle(0xd69459);
+        g.fillRoundedRect(x - 8, y - 14, 14, 9, 2);
+        g.fillStyle(0x3c4d3d);
+        g.fillCircle(x - 7, y + 4, 4);
+        g.fillCircle(x + 7, y + 4, 4);
+      }
       if (e.mowers[r]) {
         const x = BOARD.mowerX,
           y = this.y(r) + 19;
@@ -630,6 +685,7 @@ export class GardenScene extends Phaser.Scene {
         g.lineStyle(3, 0xc5c2a4);
         g.lineBetween(x - 8, y - 16, x - 14, y - 34);
       }
+    }
     if (e.level.mode === "boss") {
       const key = "boss";
       keep.add(key);

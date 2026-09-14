@@ -39,15 +39,20 @@ it("魅惑双方交战互相扣血并停止移动", () => {
   expect(e.zombies.map((z) => z.hp)).toEqual([100, 100]);
   expect(e.zombies.map((z) => z.x)).toEqual([4, 4.2]);
 });
-it("种植与失败尝试保留选择", () => {
+it("种植成功清除选择，失败保留，Shift 连种保留", () => {
   const e = new Engine(1, ["pea"]);
   e.selected = "pea";
-  e.click(0, 0);
+  e.click(0, 0, true);
   expect(e.selected).toBe("pea");
   e.click(1, 0);
   expect(e.selected).toBe("pea");
   expect(e.plants.length).toBe(1);
   expect(e.message).toContain("冷却");
+  e.cooldowns.pea = 0;
+  e.sun = 100;
+  e.click(1, 0);
+  expect(e.selected).toBe("");
+  expect(e.plants.length).toBe(2);
 });
 it("巨人扔出的小鬼使用连续飞行，冻结时停在半空", () => {
   const e = new Engine(1, []);

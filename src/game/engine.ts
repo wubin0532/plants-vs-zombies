@@ -1,3 +1,4 @@
+import { jumpHeight } from "./animation";
 import { plantSound, type SoundEvent, type SoundKind } from "./audio";
 import {
   battleSettings,
@@ -13,9 +14,18 @@ import {
   isNight,
   type Level,
 } from "./content";
+const DANGER_ZOMBIES = new Set([
+  "garg",
+  "football",
+  "zomboni",
+  "catapult",
+  "dancer",
+  "jack",
+  "boss",
+]);
 export type Plant = {
   uid: number;
-  id: string;
+  hurt?: number;  id: string;
   row: number;
   col: number;
   hp: number;
@@ -27,6 +37,7 @@ export type Plant = {
   layer: "base" | "main" | "armor";
   attackAge?: number;
   ladder?: boolean;
+  digest?: number;
   chomp?: { target: number; elapsed: number; hit: boolean };
 };
 export type Zombie = {
@@ -50,6 +61,8 @@ export type Zombie = {
   maxArmor: number;
   motion: number;
   hurt?: number;
+  golden?: boolean;
+  boost?: number;
   swallowed?: boolean;
   special?: {
     kind: "smash" | "throw";
@@ -62,7 +75,14 @@ export type Zombie = {
   laneChange?: { from: number; elapsed: number };
   actionTime?: number;
   action: "walk" | "eat" | "jump" | "special";
-  jump?: { from: number; to: number; elapsed: number; duration: number };
+  jump?: {
+    from: number;
+    to: number;
+    elapsed: number;
+    duration: number;
+    kind: "vault" | "ladder" | "throw";
+    fromHeight?: number;
+  };
 };
 export type Shot = {
   uid: number;
@@ -94,6 +114,7 @@ export type Effect = {
   duration: number;
   source?: string;
   zombie?: Zombie;
+  height?: number;
 };
 export type Tile = {
   row: number;
@@ -130,6 +151,8 @@ export class Engine {
   effects: Effect[] = [];
   tiles: Tile[] = [];
   mowers: boolean[];
+  spareMowers: boolean[];
+  iceStart = false;
   sun = 150;
   coins = 0;
   time = 0;
@@ -140,7 +163,12 @@ export class Engine {
   cooldowns: Record<string, number> = {};
   selected = "";
   message = "选择种子，再点击草坪种植";
+  messageTone: "info" | "alert" = "info";
   messageUntil = 6;
+  hitStop = 0;
+  timeScale = 1;
+  winDelay = -1;
+  private alerted = new Set<string>();
   cards: string[];
   conveyor: string[] = [];
   fogClear = 0;
@@ -159,6 +187,7 @@ export class Engine {
     hit: number[];
   }[] = [];
   private uid = 1;
+  private guided = new Set<string>();
   private rng: number;
   private natural = 4;
   private nextSpawn = 22;
@@ -179,6 +208,7 @@ export class Engine {
     this.cards = cards;
     this.rng = seed || 1;
     this.mowers = Array(this.level.rows).fill(this.settings.mowers);
+    this.spareMowers = Array(this.level.rows).fill(false);
     if (this.level.scene === "night")
       for (let i = 0; i < Math.min(2 + this.level.stage, 8); i++)
         this.tiles.push({
@@ -217,9 +247,22 @@ export class Engine {
     this.rng = (Math.imul(1664525, this.rng) + 1013904223) >>> 0;
     return this.rng / 4294967296;
   }
-  say(s: string) {
+  say(s: string, tone: "info" | "alert" = "info") {
     this.message = s;
+    this.messageTone = tone;
     this.messageUntil = this.time + 4;
+  }
+  private guide(step: string, text: string): boolean {
+    if (this.level.id > 3 || this.guided.has(step)) return false;
+    this.guided.add(step);
+    this.say(text);
+    return true;
+  }
+  warnDanger(id: string) {
+    if (!DANGER_ZOMBIES.has(id) || this.alerted.has(id)) return;
+    this.alerted.add(id);
+    this.say(`⚠ 强敌来袭：${zombieById[id].name}！`, "alert");
+    this.sound("warning");
   }
   effect(x: number, row: number, type: string, source?: string) {
     const duration =
@@ -229,9 +272,11 @@ export class Engine {
           ? 1.2
           : type === "death"
             ? 0.8
-            : type === "collect"
-              ? 0.7
-              : 0.45;
+            : type === "fly"
+              ? 0.6
+              : type === "collect"
+                ? 0.7
+                : 0.45;
     const sound: Partial<Record<string, SoundKind>> = {
       smash: "smash",
       chomp: "chomp",
@@ -248,6 +293,8 @@ export class Engine {
       shovel: "shovel",
     };
     if (sound[type]) this.sound(sound[type]!, x, source);
+    if (type === "boom") this.hitStop = Math.max(this.hitStop, 0.06);
+    else if (type === "smash") this.hitStop = Math.max(this.hitStop, 0.05);
     this.effects.push({
       uid: this.uid++,
       x,
@@ -355,9 +402,9 @@ export class Engine {
       return false;
     }
     if (!belt && (this.cooldowns[id] > 0 || this.sun < d.cost)) {
-      this.say(
-        this.cooldowns[id] > 0 ? "种子还在冷却" : "阳光不足，先收集阳光",
-      );
+      if (this.cooldowns[id] > 0) this.say("种子还在冷却");
+      else if (!this.guide("sun", "阳光不足，先等向日葵生产"))
+        this.say("阳光不足，先收集阳光");
       return false;
     }
     if (belt) this.conveyor.splice(index, 1);
@@ -396,7 +443,8 @@ export class Engine {
     }
     const p = this.addPlant(d.id, row, col);
     if (d.id === "cob") p.timer = 8;
-    this.effect(col, row, "plant");
+    this.effect(col, row, "plant", d.id);
+    this.guide("planted", "点击落下的阳光，攒够阳光继续种");
     return true;
   }
   remove(p: Plant) {
@@ -430,6 +478,7 @@ export class Engine {
     if (t.coin) this.coins += t.value;
     else this.sun += t.value;
     this.effect(t.x, t.row, "collect");
+    this.effect(t.x, t.row, "fly", t.coin ? "coin" : "sun");
     this.tokens = this.tokens.filter((t) => t.uid !== uid);
   }
   token(x: number, row: number, value = 25, coin = false) {
@@ -471,6 +520,7 @@ export class Engine {
       r = [0, 1, 4, 5][Math.floor(this.random() * 4)];
     if (id === "bungee") x = 1 + Math.floor(this.random() * 7);
     this.sound("groan", x, id);
+    this.guide("zombie", "僵尸来了！在它所在的一行种射手");
     this.zombies.push({
       uid: this.uid++,
       id,
@@ -532,7 +582,7 @@ export class Engine {
     if (this.level.mode === "boss" && this.bossDown > 0)
       this.bossHp -= damage * 0.35;
   }
-  click(row: number, col: number) {
+  click(row: number, col: number, keep = false) {
     if (this.paused || this.status !== "playing") return;
     if (this.cannon) {
       const p = this.plants.find((p) => p.uid === this.cannon);
@@ -570,7 +620,8 @@ export class Engine {
       this.say("点击目标区域发射玉米炮");
       return;
     }
-    if (this.selected) this.plant(this.selected, row, col);
+    if (this.selected && this.plant(this.selected, row, col) && !keep)
+      this.selected = "";
   }
   hitZombie(uid: number) {
     if (this.level.mode !== "whack" || this.paused || this.status !== "playing")
@@ -645,6 +696,7 @@ export class Engine {
       const event = this.schedule[this.spawned++];
       if (event.wave !== this.wave) {
         this.wave = event.wave;
+        if (event.wave === this.totalWaves) this.sound("horn");
         if (event.wave % 4 === 0 || event.wave === this.totalWaves)
           this.say("一大波僵尸正在接近！");
       }
@@ -653,16 +705,49 @@ export class Engine {
         undefined,
         this.level.mode === "whack" ? 4 + this.random() * 4 : 9.6,
       );
+      if (
+        this.level.mode === "normal" &&
+        !DANGER_ZOMBIES.has(event.id) &&
+        this.random() < 0.02
+      ) {
+        this.zombies.at(-1)!.golden = true;
+        this.say("黄金僵尸出现了！击败它获得金币");
+      }
+      // Elite variants: from wave 10 some zombies randomly spawn enraged —
+      // +60% health/armor and +30% speed, with odds growing each wave.
+      const rageChance =
+        event.wave >= 10 ? Math.min(0.4, 0.08 + (event.wave - 10) * 0.04) : 0;
+      if (rageChance > 0 && this.random() < rageChance) {
+        const zed = this.zombies.at(-1)!;
+        zed.hp *= 1.6;
+        zed.max *= 1.6;
+        zed.armor *= 1.6;
+        zed.maxArmor *= 1.6;
+        zed.boost = 1.3;
+        if (!this.alerted.has("rage")) {
+          this.alerted.add("rage");
+          this.say("狂暴僵尸混入敌群！红色的它们更快、更强", "alert");
+          this.sound("danger");
+        }
+      }
+      this.warnDanger(event.id);
       if (this.spawned === this.schedule.length && this.level.scene === "night")
         for (const tile of this.tiles)
           if (tile.type === "grave") this.spawn("basic", tile.row, tile.col);
+    }
+    if (this.iceStart && this.spawned > 0) {
+      this.iceStart = false;
+      for (const z of this.zombies) z.freeze = Math.max(z.freeze, 4);
+      this.sound("freeze");
     }
     if (this.level.mode === "boss") this.updateBoss(dt);
     for (const p of [...this.plants]) {
       if (p.hp <= 0) continue;
       p.age += dt;
+      if (p.hurt) p.hurt = Math.max(0, p.hurt - dt);
       if (p.sleep) continue;
       p.timer -= dt;
+      if (p.digest) p.digest = Math.max(0, p.digest - dt);
       const d = plantById[p.id];
       const targets = this.zombies.filter(
         (z) => z.hp > 0 && !z.ally && !z.underground,
@@ -766,6 +851,7 @@ export class Engine {
               this.damage(victim, 1800, true);
               if (victim.hp <= 0) victim.swallowed = true;
               p.timer = 35;
+              p.digest = 35;
               this.effect(p.col + 0.4, p.row, "chomp", p.id);
             } else p.timer = 0.6;
           }
@@ -788,6 +874,7 @@ export class Engine {
             if (["zomboni", "catapult"].includes(z.id)) {
               z.hp = 0;
               p.hp -= 300;
+              p.hurt = 0.2;
               if (p.id === "spike") p.hp = 0;
             }
           }
@@ -1007,9 +1094,13 @@ export class Engine {
     for (const z of dead) {
       if (!z.swallowed) {
         this.effect(z.x, z.row, "death", z.id);
-        this.effects.at(-1)!.zombie = { ...z };
+        const fx = this.effects.at(-1)!;
+        fx.zombie = { ...z };
+        fx.height = jumpHeight(z);
       }
       if (this.random() < 0.1) this.token(z.x, z.row, 10, true);
+      if (z.golden)
+        this.token(z.x, z.row, 100 + Math.floor(this.random() * 101), true);
     }
     this.zombies = this.zombies.filter((z) => z.hp > 0 && z.x > -2 && z.x < 12);
     this.plants = this.plants.filter((p) => p.hp > 0);
@@ -1023,8 +1114,13 @@ export class Engine {
           this.spawned >= this.level.count &&
           !this.zombies.some((z) => !z.ally)))
     ) {
-      this.status = "won";
-      this.say("庭院守住了！");
+      // Victory slow-mo: hold the win for a beat; scene drops the pace meanwhile.
+      if (this.winDelay < 0) {
+        this.winDelay = 0.35;
+        this.say("庭院守住了！");
+      }
+      this.winDelay -= dt;
+      if (this.winDelay <= 0) this.status = "won";
     }
   }
   updateZombie(z: Zombie, dt: number) {
@@ -1032,7 +1128,7 @@ export class Engine {
       frozen = z.freeze > 0;
     this.advanceZombie(z, dt);
     if (z.action !== previous) z.actionTime = 0;
-    else if (!frozen) z.actionTime = (z.actionTime ?? 0) + dt;
+    else if (!frozen) z.actionTime = (z.actionTime ?? 0) + dt * (z.slow > 0 ? 0.5 : 1);
   }
   private advanceZombie(z: Zombie, dt: number) {
     if (z.hp <= 0) return;
@@ -1052,7 +1148,8 @@ export class Engine {
     z.action = "walk";
     if (z.jump) {
       z.action = "jump";
-      z.jump.elapsed = Math.min(z.jump.duration, z.jump.elapsed + dt);
+      const clock = z.slow > 0 ? dt * 0.5 : dt;
+      z.jump.elapsed = Math.min(z.jump.duration, z.jump.elapsed + clock);
       const progress = z.jump.elapsed / z.jump.duration;
       z.x = z.jump.from + (z.jump.to - z.jump.from) * progress;
       if (progress >= 1) {
@@ -1065,7 +1162,8 @@ export class Engine {
     if (z.special) {
       z.action = "special";
       const action = z.special;
-      action.elapsed = Math.min(action.duration, action.elapsed + dt);
+      const clock = z.slow > 0 ? dt * 0.5 : dt;
+      action.elapsed = Math.min(action.duration, action.elapsed + clock);
       if (!action.hit && action.elapsed >= action.duration * 0.5) {
         action.hit = true;
         if (action.kind === "throw") {
@@ -1078,6 +1176,8 @@ export class Engine {
             to: Math.max(0, Math.min(9.5, z.x + (z.reverse ? 4 : -4))),
             elapsed: 0,
             duration: 1.1,
+            kind: "throw",
+            fromHeight: 60,
           };
           imp.action = "jump";
           this.effect(z.x, z.row, "jump", "garg");
@@ -1149,6 +1249,7 @@ export class Engine {
         );
         if (p && !this.protected(p.row, p.col)) {
           p.hp -= 100;
+          p.hurt = 0.16;
           this.effect(p.col, p.row, "hit");
         }
         z.timer = 3;
@@ -1229,7 +1330,7 @@ export class Engine {
       ) {
         target.ladder = true;
         z.jumped = true;
-        z.jump = { from: z.x, to: z.x - 1, elapsed: 0, duration: 0.7 };
+        z.jump = { from: z.x, to: z.x - 1, elapsed: 0, duration: 0.7, kind: "ladder" };
         z.action = "jump";
         this.effect(z.x, z.row, "jump");
         return;
@@ -1239,7 +1340,7 @@ export class Engine {
         !z.jumped &&
         target.id !== "tallnut"
       ) {
-        z.jump = { from: z.x, to: z.x - 1.25, elapsed: 0, duration: 0.85 };
+        z.jump = { from: z.x, to: z.x - 1.25, elapsed: 0, duration: 0.85, kind: "vault" };
         z.action = "jump";
         this.effect(z.x, z.row, "jump");
         if (z.id !== "pogo") z.jumped = true;
@@ -1267,16 +1368,30 @@ export class Engine {
         target.hp -= ["garg", "zomboni", "catapult"].includes(z.id)
           ? 9999
           : 100;
+        target.hurt = 0.16;
         z.timer = ["garg"].includes(z.id) ? 2 : 1;
         this.effect(target.col, target.row, "bite", z.id);
       }
       return;
     }
-    let speed = (d.speed / 96) * this.settings.speed;
+    let speed = (d.speed / 96) * this.settings.speed * (z.boost ?? 1);
     if (z.id === "paper" && z.armor === 0) speed *= 2.8;
     if (z.jumped && ["pole", "dolphin"].includes(z.id)) speed *= 0.5;
     if (z.slow > 0) speed *= 0.5;
     z.x += speed * dt * (z.reverse ? 1 : -1);
+    if (
+      this.level.mode === "normal" &&
+      !z.ally &&
+      !z.reverse &&
+      z.x < 3.5 &&
+      !this.mowers[z.row] &&
+      !this.spareMowers[z.row] &&
+      !this.alerted.has("danger")
+    ) {
+      this.alerted.add("danger");
+      this.sound("danger");
+      this.say("防线告急！有僵尸突破了中场", "alert");
+    }
     const lastStep = Math.floor(z.motion / 12);
     z.motion += speed * dt * 96;
     if (
@@ -1299,8 +1414,9 @@ export class Engine {
         this.tiles.push({ row: z.row, col, type: "ice", life: 60 });
     }
     if (z.x < -0.65 && !z.ally) {
-      if (this.mowers[z.row]) {
-        this.mowers[z.row] = false;
+      if (this.mowers[z.row] || this.spareMowers[z.row]) {
+        if (this.mowers[z.row]) this.mowers[z.row] = false;
+        else this.spareMowers[z.row] = false;
         for (const q of this.zombies) if (q.row === z.row && !q.ally) q.hp = 0;
         this.effect(0, z.row, "mower");
         this.say("割草机出动！这一行已失去最后的保护");

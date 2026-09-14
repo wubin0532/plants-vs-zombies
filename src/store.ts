@@ -14,6 +14,13 @@ export type Save = {
   mix: { battle: number; music: number; environment: number; ui: number };
   quality: "low" | "medium" | "high";
   shake: boolean;
+  stars: Record<number, number>;
+  daily: { date: string; best: number };
+  achievements: string[];
+  items: Record<string, number>;
+  kills: number;
+  contrast: boolean;
+  fontSize: "small" | "standard" | "large";
   options: BattleOptions;
   scores: {
     level: number;
@@ -32,6 +39,13 @@ export const initial = (): Save => ({
   mix: { battle: 1, music: 0.25, environment: 0.3, ui: 0.65 },
   quality: "high",
   shake: true,
+  stars: {},
+  daily: { date: "", best: 0 },
+  achievements: [],
+  items: {},
+  kills: 0,
+  contrast: false,
+  fontSize: "standard",
   options: defaultOptions(),
   scores: [],
 });
@@ -74,6 +88,44 @@ export function validateSave(data: unknown): Save {
         : 0.65,
     quality: ["low", "medium", "high"].includes(d.quality) ? d.quality : "high",
     shake: typeof d.shake === "boolean" ? d.shake : true,
+    stars:
+      d.stars && typeof d.stars === "object"
+        ? Object.fromEntries(
+            Object.entries(d.stars).filter(
+              ([level, n]) =>
+                Number.isInteger(Number(level)) &&
+                Number(level) >= 1 &&
+                Number(level) <= 50 &&
+                Number.isInteger(n) &&
+                n >= 0 &&
+                n <= 3,
+            ),
+          )
+        : {},
+    daily:
+      d.daily &&
+      typeof d.daily === "object" &&
+      typeof d.daily.date === "string" &&
+      Number.isFinite(d.daily.best) &&
+      d.daily.best >= 0
+        ? { date: d.daily.date, best: d.daily.best }
+        : { date: "", best: 0 },
+    achievements: Array.isArray(d.achievements)
+      ? [...new Set(d.achievements.filter((a) => typeof a === "string"))]
+      : [],
+    items:
+      d.items && typeof d.items === "object"
+        ? Object.fromEntries(
+            Object.entries(d.items).filter(
+              ([, n]) => Number.isInteger(n) && n > 0 && n <= 99,
+            ),
+          )
+        : {},
+    kills: Number.isInteger(d.kills) && d.kills >= 0 ? d.kills : 0,
+    contrast: typeof d.contrast === "boolean" ? d.contrast : false,
+    fontSize: ["small", "standard", "large"].includes(d.fontSize)
+      ? d.fontSize
+      : "standard",
     options: normalizeOptions(d.options),
     scores: Array.isArray(d.scores)
       ? d.scores
@@ -133,6 +185,25 @@ export const useSave = defineStore("save", {
       });
       this.data.scores = this.data.scores.slice(-200);
       this.persist();
+    },
+    recordStars(level: number, n: number) {
+      this.data.stars[level] = Math.max(
+        this.data.stars[level] ?? 0,
+        Math.round(n),
+      );
+      this.persist();
+    },
+    recordDaily(date: string, seconds: number) {
+      if (this.data.daily.date !== date || seconds < this.data.daily.best)
+        this.data.daily = { date, best: Math.round(seconds) };
+      this.persist();
+    },
+    buyItem(id: string, price: number) {
+      if (this.data.coins < price) return false;
+      this.data.coins -= price;
+      this.data.items[id] = (this.data.items[id] ?? 0) + 1;
+      this.persist();
+      return true;
     },
     importSave(raw: string) {
       this.data = validateSave(JSON.parse(raw));

@@ -5,18 +5,30 @@ import {
   onMounted,
   onBeforeUnmount,
   watch,
+  watchEffect,
   nextTick,
   markRaw,
 } from "vue";
 import { plants, plantById, zombies, worlds, levels } from "./game/content";
+import type { PlantDef, ZombieDef } from "./game/content";
 import { plantImage, zombieImage, gardenImage } from "./game/art";
 import { battleSettings, defaultOptions } from "./game/difficulty";
+import { dailyChallenge } from "./game/daily";
+import { achievementDefs, checkAchievements } from "./achievements";
 import { Engine } from "./game/engine";
 import { mountGame } from "./game/scene";
 import { GardenAudio } from "./game/audio";
+import type { SoundKind } from "./game/audio";
 import { useSave } from "./store";
 const save = useSave();
 save.load();
+{
+  const fresh = checkAchievements(save.data);
+  if (fresh.length) {
+    save.data.achievements.push(...fresh.map((a) => a.id));
+    save.persist();
+  }
+}
 const page = ref<"home" | "select" | "game">("home"),
   modal = ref(""),
   tab = ref("plants"),
@@ -28,6 +40,11 @@ const chosen = ref<string[]>([]),
   engine = ref<Engine>(),
   playing = ref(false),
   result = ref(""),
+  resultStars = ref(0),
+  loseTip = ref(""),
+  denied = ref(""),
+  dailyMode = ref(false),
+  newAchievements = ref<string[]>([]),
   full = ref(false),
   file = ref<HTMLInputElement>(),
   imitate = ref("pea");
@@ -59,6 +76,12 @@ function updateSettings() {
 function sampleSound() {
   void audio.unlock().then(() => audio.play("groan"));
 }
+function sampleChannel(channel: string) {
+  const kind = { battle: "pea", music: "music", environment: "ambient", ui: "sun" }[
+    channel
+  ] as SoundKind | undefined;
+  if (kind) void audio.unlock().then(() => audio.play(kind));
+}
 function resetDifficulty() {
   save.data.options = defaultOptions();
   save.persist();
@@ -72,6 +95,8 @@ const stats = computed(() => {
     paused: e?.paused || false,
     progress: e ? Math.min(100, (e.spawned / e.level.count) * 100) : 0,
     message: e && e.time < e.messageUntil ? e.message : "",
+    alert: !!(e && e.time < e.messageUntil && e.messageTone === "alert"),
+    coins: e?.coins || 0,
     belt: e?.conveyor || [],
     cooldowns: { ...e?.cooldowns },
     time: Math.floor(e?.time || 0),
@@ -83,6 +108,36 @@ const stats = computed(() => {
 });
 const pa = plantImage,
   za = zombieImage;
+const tip = (item: PlantDef | ZombieDef) => ("tip" in item ? item.tip : "");
+const loseTips = [
+  "试试把坚果放在更靠前的位置。",
+  "多种几株向日葵，阳光充足才有底气。",
+  "寒冰射手能拖慢僵尸，为防线争取时间。",
+  "土豆地雷便宜又实用，开局先埋几颗。",
+];
+const daily = computed(() => dailyChallenge(new Date(), save.data.unlocked));
+const shopItems = [
+  { id: "sun-boost", name: "应急阳光", price: 150, desc: "下一局开局阳光 +75。" },
+  {
+    id: "spare-mower",
+    name: "备用小推车",
+    price: 200,
+    desc: "下一局每行多一台备用小推车。",
+  },
+  {
+    id: "ice-start",
+    name: "冰冻开场",
+    price: 100,
+    desc: "下一局首波僵尸出场时，全体冰冻 4 秒。",
+  },
+];
+function buy(item: (typeof shopItems)[number]) {
+  if (save.buyItem(item.id, item.price)) audio.play("sun");
+}
+function startDaily() {
+  dailyMode.value = true;
+  void start();
+}
 function chooseLevel(id: number) {
   void exitBattleFullscreen();
   audio.stop();
@@ -91,6 +146,9 @@ function chooseLevel(id: number) {
   engine.value = undefined;
   playing.value = false;
   result.value = "";
+  resultStars.value = 0;
+  newAchievements.value = [];
+  dailyMode.value = false;
   levelId.value = id;
   modal.value = "";
   const unlocked = available.value.map((p) => p.id);
@@ -165,23 +223,44 @@ function toggle(id: string) {
   audio.play("click");
 }
 async function start() {
-  if (!chosen.value.length) return;
+  const d = dailyMode.value ? daily.value : null;
+  if (!d && !chosen.value.length) return;
   audio.stop();
   await audio.unlock();
   save.persist();
   game?.destroy(true);
   engine.value = markRaw(
     new Engine(
-      levelId.value,
-      [...chosen.value],
-      levelId.value * 719,
-      save.data.options,
+      d ? d.levelId : levelId.value,
+      d ? d.cards : [...chosen.value],
+      d ? d.seed : levelId.value * 719,
+      d ? defaultOptions() : save.data.options,
     ),
   );
   engine.value.imitate = imitate.value;
+  const items = save.data.items;
+  let usedItem = false;
+  if ((items["sun-boost"] ?? 0) > 0) {
+    items["sun-boost"]--;
+    engine.value.sun += 75;
+    usedItem = true;
+  }
+  if ((items["spare-mower"] ?? 0) > 0) {
+    items["spare-mower"]--;
+    engine.value.spareMowers.fill(true);
+    usedItem = true;
+  }
+  if ((items["ice-start"] ?? 0) > 0) {
+    items["ice-start"]--;
+    engine.value.iceStart = true;
+    usedItem = true;
+  }
+  if (usedItem) save.persist();
 
   settled = false;
   result.value = "";
+  resultStars.value = 0;
+  newAchievements.value = [];
   page.value = "game";
   playing.value = true;
   await nextTick();
@@ -196,15 +275,44 @@ async function start() {
       if (e.status !== "playing" && !settled) {
         settled = true;
         result.value = e.status;
+        save.data.kills += e.kills;
+        const mowersIntact =
+          e.mowers.every(Boolean) && e.spareMowers.every((m) => !m);
         if (e.status === "won") {
-          if (e.settings.difficulty !== "custom")
+          if (dailyMode.value) save.recordDaily(daily.value.date, e.time);
+          else if (e.settings.difficulty !== "custom") {
             save.win(levelId.value, e.coins);
-          save.record(levelId.value, e.time, e.settings);
+            resultStars.value =
+              1 +
+              (mowersIntact ? 1 : 0) +
+              (e.time <= e.settings.duration ? 1 : 0);
+            save.recordStars(levelId.value, resultStars.value);
+          }
+          if (!dailyMode.value) save.record(levelId.value, e.time, e.settings);
           audio.play("win");
-        } else audio.play("lose");
+        } else {
+          loseTip.value =
+            loseTips[Math.floor(Math.random() * loseTips.length)];
+          audio.play("lose");
+        }
+        const fresh = checkAchievements(
+          save.data,
+          e.status === "won"
+            ? {
+                coins: e.coins,
+                difficulty: e.settings.difficulty,
+                mowersIntact,
+              }
+            : undefined,
+        );
+        if (fresh.length) {
+          save.data.achievements.push(...fresh.map((a) => a.id));
+          newAchievements.value = fresh.map((a) => a.name);
+        }
+        save.persist();
       }
     },
-    { audio, quality: () => save.data.quality, shake: () => save.data.shake },
+    { audio, quality: () => save.data.quality, shake: () => save.data.shake, contrast: () => save.data.contrast },
   );
 }
 function home() {
@@ -216,12 +324,46 @@ function home() {
   page.value = "home";
   playing.value = false;
   result.value = "";
+  dailyMode.value = false;
   modal.value = "";
 }
+function speed() {
+  const e = engine.value;
+  if (!e) return;
+  e.timeScale = e.timeScale === 1 ? 2 : 1;
+  tick.value++;
+  audio.play("click");
+}
+const flagMarks = computed(() => {
+  const e = engine.value;
+  if (!e || !e.schedule.length) return [];
+  const seen = new Set<number>(),
+    marks: number[] = [];
+  for (const ev of e.schedule) {
+    if ((ev.wave % 4 === 0 || ev.wave === e.totalWaves) && !seen.has(ev.wave)) {
+      seen.add(ev.wave);
+      marks.push((ev.at / e.settings.duration) * 100);
+    }
+  }
+  return marks;
+});
 function selectSeed(id: string) {
-  if (!engine.value || engine.value.paused || engine.value.status !== "playing")
+  const e = engine.value;
+  if (!e || e.paused || e.status !== "playing") return;
+  if (
+    id !== "shovel" &&
+    !e.isBelt &&
+    (e.sun < e.getDef(id).cost || e.cooldowns[id] > 0)
+  ) {
+    denied.value = "";
+    requestAnimationFrame(() => (denied.value = id));
+    setTimeout(() => {
+      if (denied.value === id) denied.value = "";
+    }, 450);
+    audio.play("click");
     return;
-  engine.value.selected = engine.value.selected === id ? "" : id;
+  }
+  e.selected = e.selected === id ? "" : id;
   tick.value++;
   audio.play("click");
 }
@@ -306,6 +448,11 @@ watch(full, (value) => {
   document.body.classList.toggle("battle-fullscreen", value);
   void nextTick().then(() => window.dispatchEvent(new Event("resize")));
 });
+watchEffect(() => {
+  document.body.classList.toggle("high-contrast", save.data.contrast);
+  document.body.classList.toggle("font-small", save.data.fontSize === "small");
+  document.body.classList.toggle("font-large", save.data.fontSize === "large");
+});
 function visibility() {
   if (document.hidden && engine.value?.status === "playing") {
     engine.value.paused = true;
@@ -332,6 +479,7 @@ function keyboard(e: KeyboardEvent) {
     tick.value++;
   }
   if (e.key === "s" || e.key === "S") selectSeed("shovel");
+  if ((e.key === "r" || e.key === "R") && engine.value) void start();
   if (/^[1-9]$/.test(e.key)) {
     const ids = engine.value?.isBelt ? stats.value.belt : chosen.value;
     const id = ids[Number(e.key) - 1];
@@ -352,12 +500,16 @@ onBeforeUnmount(() => {
   document.removeEventListener("visibilitychange", visibility);
   document.removeEventListener("fullscreenchange", fullscreenChanged);
   document.body.classList.remove("battle-fullscreen");
+  document.body.classList.remove("high-contrast", "font-small", "font-large");
   window.removeEventListener("keydown", keyboard);
 });
 </script>
 
 <template>
-  <div class="app-shell" :class="{ immersive: full && page === 'game' }">
+  <div
+    class="app-shell"
+    :class="{ immersive: full && page === 'game', 'in-game': page === 'game' }"
+  >
     <header class="topbar">
       <button class="brand" @click="page === 'game' ? pause() : home()">
         <span class="brand-mark"><img :src="pa('pea')" alt="" /></span
@@ -472,6 +624,19 @@ onBeforeUnmount(() => {
               ><small>MEET THE NEIGHBORS</small
               ><strong>认识你的庭院伙伴</strong>
               <p>每一种植物，都有自己的拿手好戏。</p></span
+            ><b>↗</b>
+          </button>
+          <button class="feature-card" @click="startDaily">
+            <span class="feature-art map-art">✦</span
+            ><span
+              ><small>DAILY CHALLENGE</small><strong>每日挑战</strong>
+              <p>
+                {{
+                  save.data.daily.date === daily.date
+                    ? `今日已完成 · 最佳 ${Math.floor(save.data.daily.best / 60)}:${String(save.data.daily.best % 60).padStart(2, "0")}`
+                    : "今日未挑战 · 随机关卡与卡池"
+                }}
+              </p></span
             ><b>↗</b>
           </button>
           <div class="garden-tip">
@@ -596,6 +761,30 @@ onBeforeUnmount(() => {
             </p>
           </div>
         </section>
+        <section class="shop-panel">
+          <div class="panel-heading">
+            <h3>庭院商店</h3>
+            <span>{{ save.data.coins }} 金币 · 开局时消耗，重开不返还</span>
+          </div>
+          <div class="shop-grid">
+            <div v-for="item in shopItems" :key="item.id" class="shop-item">
+              <strong
+                >{{ item.name
+                }}<em v-if="save.data.items[item.id]"
+                  >已持有 ×{{ save.data.items[item.id] }}</em
+                ></strong
+              >
+              <p>{{ item.desc }}</p>
+              <button
+                class="plain"
+                :disabled="save.data.coins < item.price"
+                @click="buy(item)"
+              >
+                {{ item.price }} 金币
+              </button>
+            </div>
+          </div>
+        </section>
         <div class="selection-layout">
           <div class="selection-panel">
             <div class="panel-heading">
@@ -683,19 +872,23 @@ onBeforeUnmount(() => {
           <div>
             <span class="kicker">{{ worlds[level.world].name }}</span>
             <h2>
-              第 {{ level.label }} 关
+              {{ dailyMode ? "每日挑战" : `第 ${level.label} 关` }}
               <small>{{
-                level.mode === "normal"
-                  ? "庭院防线"
-                  : level.mode === "boss"
-                    ? "最后的守护"
-                    : "特别挑战"
+                dailyMode
+                  ? "种子 " + daily.date
+                  : level.mode === "normal"
+                    ? "庭院防线"
+                    : level.mode === "boss"
+                      ? "最后的守护"
+                      : "特别挑战"
               }}</small>
             </h2>
           </div>
           <div class="game-controls">
             <button class="plain" @click="sound">
               {{ save.data.sound ? "音效：开" : "音效：关" }}</button
+            ><button class="plain" @click="speed">
+              速度：{{ engine?.timeScale === 2 ? "2x" : "1x" }}</button
             ><button class="plain" @click="fullscreen">全屏</button
             ><button class="plain" @click="pause">
               {{ stats.paused ? "继续游戏" : "暂停游戏" }}
@@ -717,6 +910,11 @@ onBeforeUnmount(() => {
               ><strong>{{ engine?.isBelt ? "传送带" : stats.sun }}</strong
               ><small>{{ engine?.isBelt ? "免费种植" : "阳光储备" }}</small>
             </div>
+            <div class="sun-counter coin-counter" title="本局收集的金币">
+              <span class="coin-icon"></span
+              ><strong>{{ stats.coins }}</strong
+              ><small>金币</small>
+            </div>
             <div class="battle-seeds">
               <button
                 v-for="(id, i) in engine?.isBelt ? stats.belt : chosen"
@@ -724,6 +922,7 @@ onBeforeUnmount(() => {
                 class="battle-seed"
                 :class="{
                   selected: stats.selected === id,
+                  denied: denied === id,
                   unavailable:
                     !engine?.isBelt &&
                     (stats.sun < engine!.getDef(id).cost ||
@@ -766,6 +965,7 @@ onBeforeUnmount(() => {
             <div
               v-if="stats.message && !stats.paused && !result"
               class="game-message"
+              :class="{ alert: stats.alert }"
             >
               {{ stats.message }}
             </div>
@@ -803,16 +1003,50 @@ onBeforeUnmount(() => {
                 <p>
                   {{
                     result === "won"
-                      ? engine?.settings.difficulty === "custom"
-                        ? "自定义挑战成绩已保存，不影响冒险解锁。"
-                        : "通关进度已保存，下一段冒险在等你。"
-                      : "试试多种阳光植物，及时补上薄弱的防线。"
+                      ? dailyMode
+                        ? "今日挑战完成，明天再来。"
+                        : engine?.settings.difficulty === "custom"
+                          ? "自定义挑战成绩已保存，不影响冒险解锁。"
+                          : "通关进度已保存，下一段冒险在等你。"
+                      : loseTip
                   }}
+                </p>
+                <p v-if="result === 'won' && resultStars" class="result-stars">
+                  {{ "★".repeat(resultStars) }}{{ "☆".repeat(3 - resultStars) }}
+                </p>
+                <div class="result-stats">
+                  <span
+                    >用时 {{ Math.floor((engine?.time || 0) / 60) }}:{{
+                      String(Math.floor((engine?.time || 0) % 60)).padStart(
+                        2,
+                        "0",
+                      )
+                    }}</span
+                  ><span>击杀 {{ engine?.kills || 0 }}</span
+                  ><span>剩余阳光 {{ engine?.sun || 0 }}</span
+                  ><span v-if="engine?.settings.mowers"
+                    >失去小推车
+                    {{
+                      engine.mowers.filter((m) => !m).length +
+                      engine.spareMowers.filter(Boolean).length
+                    }}</span
+                  >
+                </div>
+                <p
+                  v-for="name in newAchievements"
+                  :key="name"
+                  class="achievement-earned"
+                >
+                  解锁成就：{{ name }}
+                </p>
+                <p v-if="engine?.coins" class="coin-earned">
+                  本局收集金币 +{{ engine.coins }}
                 </p>
                 <button
                   class="primary"
                   @click="
                     result === 'won' &&
+                    !dailyMode &&
                     levelId < 50 &&
                     engine?.settings.difficulty !== 'custom'
                       ? chooseLevel(levelId + 1)
@@ -821,6 +1055,7 @@ onBeforeUnmount(() => {
                 >
                   {{
                     result === "won" &&
+                    !dailyMode &&
                     levelId < 50 &&
                     engine?.settings.difficulty !== "custom"
                       ? "前往下一关 →"
@@ -845,7 +1080,13 @@ onBeforeUnmount(() => {
                         ? (stats.boss / (engine?.bossMax || 24000)) * 100
                         : stats.progress) + '%',
                   }"
-                ></i>
+                ></i
+                ><b
+                  v-for="(f, i) in flagMarks"
+                  :key="i"
+                  class="flag-mark"
+                  :style="{ left: f + '%' }"
+                ></b>
               </div>
               <b>{{
                 level.mode === "boss"
@@ -873,8 +1114,8 @@ onBeforeUnmount(() => {
           >
         </div>
         <p class="keyboard-hint">
-          点击种子，再点击草坪种植 · 点击阳光收集 · 空格暂停 · 数字键选卡 · S
-          键切换铲子
+          点击种子，再点击草坪种植 · 按住 Shift 连种 · 点击阳光收集 ·
+          空格暂停 · 数字键选卡 · S 键切换铲子 · R 键重开本关
         </p>
       </template>
     </main>
@@ -924,6 +1165,9 @@ onBeforeUnmount(() => {
                     : "→"
               }}</span
               ><strong>{{ l.label }}</strong
+              ><span v-if="save.data.stars[l.id]" class="level-stars">{{
+                "★".repeat(save.data.stars[l.id])
+              }}</span
               ><small>{{
                 l.id > save.data.unlocked
                   ? "尚未解锁"
@@ -950,10 +1194,31 @@ onBeforeUnmount(() => {
               :class="{ active: tab === 'zombies' }"
               @click="tab = 'zombies'"
             >
-              僵尸访客 · {{ zombies.length }}
+              僵尸访客 · {{ zombies.length }}</button
+            ><button
+              :class="{ active: tab === 'achievements' }"
+              @click="tab = 'achievements'"
+            >
+              成就 · {{ save.data.achievements.length }} /
+              {{ achievementDefs.length }}
             </button>
           </div>
-          <div class="almanac-grid">
+          <div v-if="tab === 'achievements'" class="almanac-grid">
+            <article
+              v-for="a in achievementDefs"
+              :key="a.id"
+              :class="{ locked: !save.data.achievements.includes(a.id) }"
+            >
+              <span class="achievement-mark">{{
+                save.data.achievements.includes(a.id) ? "★" : "☆"
+              }}</span>
+              <div>
+                <h3>{{ a.name }}</h3>
+                <p>{{ a.desc }}</p>
+              </div>
+            </article>
+          </div>
+          <div v-else class="almanac-grid">
             <article
               v-for="item in tab === 'plants' ? plants : zombies"
               :key="item.id"
@@ -973,6 +1238,7 @@ onBeforeUnmount(() => {
                 >
                 <h3>{{ item.name }}</h3>
                 <p>{{ item.desc }}</p>
+                <p v-if="tip(item)" class="tip"><b>对策</b>{{ tip(item) }}</p>
               </div>
             </article>
           </div></template
@@ -1017,7 +1283,9 @@ onBeforeUnmount(() => {
               :aria-label="label"
               v-model.number="save.data.mix[channel]"
               @input="updateSettings"
-            />
+            /><button class="plain" @click="sampleChannel(channel)">
+              试听
+            </button>
           </div>
           <div class="setting-row">
             <span>特效质量</span
@@ -1039,6 +1307,31 @@ onBeforeUnmount(() => {
               v-model="save.data.shake"
               @change="updateSettings"
             />
+          </div>
+          <div class="setting-row">
+            <span
+              >高对比度<small>加深边框与文字，减速僵尸用更深的蓝色</small></span
+            ><button
+              class="plain"
+              @click="
+                save.data.contrast = !save.data.contrast;
+                save.persist();
+              "
+            >
+              {{ save.data.contrast ? "已开启" : "已关闭" }}
+            </button>
+          </div>
+          <div class="setting-row">
+            <span>界面字号<small>不影响游戏画面本身</small></span
+            ><select
+              aria-label="界面字号"
+              v-model="save.data.fontSize"
+              @change="save.persist()"
+            >
+              <option value="small">小</option>
+              <option value="standard">标准</option>
+              <option value="large">大</option>
+            </select>
           </div>
           <div class="setting-row">
             <span
