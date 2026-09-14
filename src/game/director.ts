@@ -4,12 +4,12 @@ import type { Plant, Zombie } from "./engine";
 export function laneStrength(plants: Plant[], zombies: Zombie[], row: number) {
   let score = 0;
   for (const p of plants) {
-    if (p.row !== row) continue;
+    if (p.row !== row || p.hp <= 0) continue;
     const d = plantById[p.id];
-    if (d.damage && d.interval) score += d.damage / d.interval;
+    if (!p.sleep && d.damage && d.interval) score += d.damage / d.interval;
     if (d.kind === "wall" || d.kind === "armor") score += p.hp / 400;
-    if (["snowpea", "winter"].includes(p.id)) score += 6;
-    if (d.kind === "spike") score += 8;
+    if (!p.sleep && ["snowpea", "winter"].includes(p.id)) score += 6;
+    if (!p.sleep && d.kind === "spike") score += 8;
   }
   for (const z of zombies)
     if (z.row === row && !z.ally && z.hp > 0) score -= (z.hp + z.armor) / 300;

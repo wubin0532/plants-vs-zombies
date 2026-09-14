@@ -19,6 +19,11 @@ export async function mountGame(
     height: 690,
     transparent: true,
     antialias: true,
+    render: {
+      // AUTO retains Canvas fallback; this is a browser hint, not a GPU guarantee.
+      powerPreference: "high-performance",
+      antialiasGL: false,
+    },
     scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
     scene: new GardenScene(engine, notify, options),
     audio: { noAudio: true },

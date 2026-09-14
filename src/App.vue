@@ -57,6 +57,7 @@ const chosen = ref<string[]>([]),
   file = ref<HTMLInputElement>(),
   imitate = ref("pea");
 let game: Awaited<ReturnType<typeof mountGame>> | undefined;
+let gameGeneration = 0, starting = false;
 let lastRestartKey = -1e9;
 const audio = new GardenAudio();
 let settled = false;
@@ -162,7 +163,8 @@ const demoId = ref(""),
   demoEl = ref<HTMLElement>();
 let demoGame: Awaited<ReturnType<typeof mountGame>> | undefined,
   demoTimer = 0,
-  demoCount = 0;
+  demoCount = 0,
+  demoGeneration = 0;
 const demoable = (item: PlantDef | ZombieDef) =>
   "cost" in item &&
   !item.upgrade &&
@@ -170,26 +172,39 @@ const demoable = (item: PlantDef | ZombieDef) =>
     item.id,
   );
 async function openDemo(id: string) {
+  closeDemo();
+  const generation = demoGeneration;
   demoId.value = id;
   await nextTick();
+  if (generation !== demoGeneration || !demoEl.value) return;
   const night = isMushroom(id);
   const e = markRaw(new Engine(night ? 11 : 1, [], (night ? 11 : 1) * 719));
+  e.schedule = [];
   e.addPlant(id, 2, 3);
+  // Keep a target in the demonstrated plant's lane so a short preview fires.
+  e.spawn("basic", 2, 7);
   demoCount = 0;
-  demoGame = await mountGame(
+  const mounted = await mountGame(
     demoEl.value!,
     e,
     () => {
+      if (generation !== demoGeneration) return;
       demoCount++;
-      if (demoCount % 31 === 0) e.spawn("basic", Math.floor(Math.random() * 5), 9);
+      if (demoCount % 31 === 0) e.spawn("basic", 2, 7);
       if (demoCount % 13 === 0 && !e.plants.some((p) => p.id === id))
         e.addPlant(id, 2, 3);
     },
     {},
   );
+  if (generation !== demoGeneration) {
+    mounted.destroy(true);
+    return;
+  }
+  demoGame = mounted;
   demoTimer = window.setTimeout(closeDemo, 10000);
 }
 function closeDemo() {
+  demoGeneration++;
   clearTimeout(demoTimer);
   demoGame?.destroy(true);
   demoGame = undefined;
@@ -218,6 +233,8 @@ function startDaily() {
   void start();
 }
 function chooseLevel(id: number) {
+  gameGeneration++;
+  starting = false;
   void exitBattleFullscreen();
   audio.stop();
   game?.destroy(true);
@@ -303,99 +320,112 @@ function toggle(id: string) {
 }
 async function start() {
   const d = dailyMode.value ? daily.value : null;
-  if (!d && !chosen.value.length) return;
-  audio.stop();
-  await audio.unlock();
-  save.persist();
-  game?.destroy(true);
-  engine.value = markRaw(
-    new Engine(
-      d ? d.levelId : levelId.value,
-      d ? d.cards : [...chosen.value],
-      d ? d.seed : levelId.value * 719,
-      d ? defaultOptions() : save.data.options,
-    ),
-  );
-  engine.value.imitate = imitate.value;
-  const items = save.data.items;
-  let usedItem = false;
-  if ((items["sun-boost"] ?? 0) > 0) {
-    items["sun-boost"]--;
-    engine.value.sun += 75;
-    usedItem = true;
-  }
-  if ((items["spare-mower"] ?? 0) > 0) {
-    items["spare-mower"]--;
-    engine.value.spareMowers.fill(true);
-    usedItem = true;
-  }
-  if ((items["ice-start"] ?? 0) > 0) {
-    items["ice-start"]--;
-    engine.value.iceStart = true;
-    usedItem = true;
-  }
-  if (usedItem) save.persist();
+  if (starting || (!d && !chosen.value.length)) return;
+  starting = true;
+  const generation = ++gameGeneration;
+  try {
+    audio.stop();
+    await audio.unlock();
+    if (generation !== gameGeneration) return;
+    save.persist();
+    game?.destroy(true);
+    engine.value = markRaw(
+      new Engine(
+        d ? d.levelId : levelId.value,
+        d ? d.cards : [...chosen.value],
+        d ? d.seed : levelId.value * 719,
+        d ? defaultOptions() : save.data.options,
+      ),
+    );
+    engine.value.imitate = imitate.value;
+    const items = save.data.items;
+    let usedItem = false;
+    if ((items["sun-boost"] ?? 0) > 0) {
+      items["sun-boost"]--;
+      engine.value.sun += 75;
+      usedItem = true;
+    }
+    if ((items["spare-mower"] ?? 0) > 0) {
+      items["spare-mower"]--;
+      engine.value.spareMowers.fill(true);
+      usedItem = true;
+    }
+    if ((items["ice-start"] ?? 0) > 0) {
+      items["ice-start"]--;
+      engine.value.iceStart = true;
+      usedItem = true;
+    }
+    if (usedItem) save.persist();
 
-  settled = false;
-  result.value = "";
-  resultStars.value = 0;
-  newAchievements.value = [];
-  page.value = "game";
-  playing.value = true;
-  await nextTick();
-  window.scrollTo(0, 0);
-  game = await mountGame(
-    gameEl.value!,
-    engine.value,
-    () => {
-      tick.value++;
-      const e = engine.value!;
+    settled = false;
+    result.value = "";
+    resultStars.value = 0;
+    newAchievements.value = [];
+    page.value = "game";
+    playing.value = true;
+    await nextTick();
+    if (generation !== gameGeneration || !gameEl.value) return;
+    window.scrollTo(0, 0);
+    const mounted = await mountGame(
+      gameEl.value!,
+      engine.value,
+      () => {
+        if (generation !== gameGeneration) return;
+        tick.value++;
+        const e = engine.value!;
 
-      if (e.status !== "playing" && !settled) {
-        settled = true;
-        result.value = e.status;
-        save.data.kills += e.kills;
-        const mowersIntact =
-          e.mowers.every(Boolean) && e.spareMowers.every((m) => !m);
-        if (e.status === "won") {
-          if (dailyMode.value) save.recordDaily(daily.value.date, e.time);
-          else if (e.settings.difficulty !== "custom") {
-            save.win(levelId.value, e.coins);
-            resultStars.value =
-              1 +
-              (mowersIntact ? 1 : 0) +
-              (e.time <= e.settings.duration ? 1 : 0);
-            save.recordStars(levelId.value, resultStars.value);
+        if (e.status !== "playing" && !settled) {
+          settled = true;
+          result.value = e.status;
+          save.data.kills += e.kills;
+          const mowersIntact =
+            e.mowers.every(Boolean) && e.spareMowers.every((m) => !m);
+          if (e.status === "won") {
+            if (dailyMode.value) save.recordDaily(daily.value.date, e.time);
+            else if (e.settings.difficulty !== "custom") {
+              save.win(levelId.value, e.coins);
+              resultStars.value =
+                1 +
+                (mowersIntact ? 1 : 0) +
+                (e.time <= e.settings.duration ? 1 : 0);
+              save.recordStars(levelId.value, resultStars.value);
+            }
+            if (!dailyMode.value) save.record(levelId.value, e.time, e.settings);
+            audio.play("win");
+          } else {
+            loseTip.value =
+              loseTips[Math.floor(Math.random() * loseTips.length)];
+            if (!dailyMode.value) save.recordLoss(levelId.value);
+            audio.play("lose");
           }
-          if (!dailyMode.value) save.record(levelId.value, e.time, e.settings);
-          audio.play("win");
-        } else {
-          loseTip.value =
-            loseTips[Math.floor(Math.random() * loseTips.length)];
-          if (!dailyMode.value) save.recordLoss(levelId.value);
-          audio.play("lose");
+          const fresh = checkAchievements(
+            save.data,
+            e.status === "won"
+              ? {
+                  coins: e.coins,
+                  difficulty: e.settings.difficulty,
+                  mowersIntact,
+                }
+              : undefined,
+          );
+          if (fresh.length) {
+            save.data.achievements.push(...fresh.map((a) => a.id));
+            newAchievements.value = fresh.map((a) => a.name);
+          }
+          save.persist();
         }
-        const fresh = checkAchievements(
-          save.data,
-          e.status === "won"
-            ? {
-                coins: e.coins,
-                difficulty: e.settings.difficulty,
-                mowersIntact,
-              }
-            : undefined,
-        );
-        if (fresh.length) {
-          save.data.achievements.push(...fresh.map((a) => a.id));
-          newAchievements.value = fresh.map((a) => a.name);
-        }
-        save.persist();
-      }
-    },
-    { audio, quality: () => save.data.quality, shake: () => save.data.shake, contrast: () => save.data.contrast },
-  );
+      },
+      { audio, quality: () => save.data.quality, shake: () => save.data.shake, contrast: () => save.data.contrast },
+    );
+    if (generation === gameGeneration) game = mounted;
+    else mounted.destroy(true);
+  } finally {
+    if (generation === gameGeneration) starting = false;
+  }
 }
 function home() {
+  gameGeneration++;
+  starting = false;
   void exitBattleFullscreen();
   audio.stop();
   game?.destroy(true);
@@ -584,6 +614,7 @@ onMounted(() => {
   window.addEventListener("keydown", keyboard);
 });
 onBeforeUnmount(() => {
+  gameGeneration++;
   game?.destroy(true);
   closeDemo();
   audio.dispose();

@@ -66,7 +66,7 @@ export type Zombie = {
   boost?: number;
   swallowed?: boolean;
   special?: {
-    kind: "smash" | "throw";
+    kind: "smash" | "throw" | "summon";
     elapsed: number;
     duration: number;
     hit: boolean;
@@ -193,6 +193,7 @@ export class Engine {
   private queuedMessages: string[] = [];
   private wavePlan: string[] = [];
   private unitWaves = new Map<string, number>();
+  private assaultLanes = new Map<number, number>();
   private killTimes: number[] = [];
   private streakAt = -10;
   plantsLost = 0;
@@ -296,7 +297,7 @@ export class Engine {
   }
   effect(x: number, row: number, type: string, source?: string) {
     const duration =
-      type === "boom"
+      type === "mower" ? 0.32 : type === "boom"
         ? 1.4
         : type === "ice"
           ? 1.2
@@ -477,12 +478,14 @@ export class Engine {
     this.guide("planted", "点击落下的阳光，攒够阳光继续种");
     return true;
   }
-  remove(p: Plant) {
+  remove(p: Plant, destroyed = false) {
+    const before = this.plants.length;
     this.plants = this.plants.filter((q) => q.uid !== p.uid);
     if (p.layer === "base")
       this.plants = this.plants.filter(
         (q) => q.row !== p.row || q.col !== p.col,
       );
+    if (destroyed) this.plantsLost += before - this.plants.length;
   }
   shovel(row: number, col: number) {
     if (this.paused || this.status !== "playing") return;
@@ -576,14 +579,17 @@ export class Engine {
     ) {
       const nextAt = this.schedule.find((e) => e.wave === next)?.at;
       if (nextAt !== undefined) {
-        let weakest = 0;
-        for (let r = 1; r < this.level.rows; r++)
+        const candidates = Array.from({ length: this.level.rows }, (_, r) => r)
+          .filter(r => !this.water(r));
+        let weakest = candidates[0];
+        for (const r of candidates.slice(1))
           if (
             laneStrength(this.plants, this.zombies, r) <
             laneStrength(this.plants, this.zombies, weakest)
           )
             weakest = r;
         this.assaultAlert = { at: Math.max(this.time, nextAt - 4), row: weakest };
+        this.assaultLanes.set(next, weakest);
       }
     }
     const weights = new Map(unlocked.map((id) => [id, 1]));
@@ -596,13 +602,13 @@ export class Engine {
       waterOpen = false;
     const rowCost = Array(this.level.rows).fill(0);
     for (let r = 0; r < this.level.rows; r++) {
-      const ps = this.plants.filter((p) => p.row === r);
+      const ps = this.plants.filter((p) => p.row === r && p.hp > 0);
       if (
         ps.some((p) => ["wall", "armor"].includes(plantById[p.id].kind)) &&
-        ps.some((p) => plantById[p.id].damage)
+        ps.some((p) => !p.sleep && plantById[p.id].damage)
       )
         wallShooterRows++;
-      if (this.water(r) && !ps.some((p) => plantById[p.id].damage))
+      if (this.water(r) && !ps.some((p) => !p.sleep && plantById[p.id].damage))
         waterOpen = true;
       for (const p of ps) rowCost[r] += plantById[p.id].cost;
     }
@@ -650,13 +656,18 @@ export class Engine {
   private pickRow(id: string): number {
     const rows = Array.from({ length: this.level.rows }, (_, r) => r);
     const land = rows.filter((r) => !this.water(r));
-    const candidates = ["balloon", "bungee"].includes(id)
+    const water = rows.filter(r => this.water(r));
+    const aquatic = ["ducky", "snorkel", "dolphin"].includes(id);
+    const candidates = aquatic && water.length ? water : ["balloon", "bungee"].includes(id)
       ? rows
       : land.length
         ? land
         : rows;
     if (!["normal", "conveyor", "storm"].includes(this.level.mode))
       return candidates[Math.floor(this.random() * candidates.length)];
+    const assault = this.assaultLanes.get(this.wave);
+    if (assault !== undefined && candidates.includes(assault) && this.random() < 0.6)
+      return assault;
     const [weakP, strongP] = tiltFor(this.level.id, this.settings.difficulty);
     const roll = this.random();
     if (roll >= weakP && roll < 1 - strongP)
@@ -668,14 +679,17 @@ export class Engine {
         j: this.random(),
       }))
       .sort((a, b) => a.s - b.s || a.j - b.j);
-    const band = roll < weakP ? order.slice(0, 2) : order.slice(-2);
+    const bandSize = Math.min(2, Math.max(1, Math.floor(order.length / 2)));
+    const band = roll < weakP ? order.slice(0, bandSize) : order.slice(-bandSize);
     return band[Math.floor(this.random() * band.length)].r;
   }
   spawn(id: string, row?: number, x = 9.6) {
     const d = zombieById[id];
     if (!d) return;
     const aquatic = ["ducky", "snorkel", "dolphin"].includes(id);
-    let r = aquatic ? 2 + Math.floor(this.random() * 2) : (row ?? this.pickRow(id));
+    let r = aquatic
+      ? row !== undefined && this.water(row) ? row : this.pickRow(id)
+      : (row ?? this.pickRow(id));
     if (
       !aquatic &&
       row === undefined &&
@@ -710,6 +724,7 @@ export class Engine {
       ally: false,
       thrown: false,
     });
+    this.livingCache = null;
   }
   damage(z: Zombie, amount: number, pierce = false) {
     if (z.hp <= 0) return;
@@ -1346,14 +1361,16 @@ export class Engine {
   }
   updateZombie(z: Zombie, dt: number) {
     const previous = z.action,
-      frozen = z.freeze > 0;
+      frozen = z.freeze > 0,
+      clock = dt * (z.slow > 0 ? 0.5 : 1);
     this.advanceZombie(z, dt);
     if (z.action !== previous) z.actionTime = 0;
-    else if (!frozen) z.actionTime = (z.actionTime ?? 0) + dt * (z.slow > 0 ? 0.5 : 1);
+    else if (!frozen) z.actionTime = (z.actionTime ?? 0) + clock;
   }
   private advanceZombie(z: Zombie, dt: number) {
     if (z.hp <= 0) return;
     const d = zombieById[z.id];
+    const slowed = z.slow > 0, clock = dt * (slowed ? 0.5 : 1);
     z.slow = Math.max(0, z.slow - dt);
     if (z.freeze > 0) {
       z.freeze = Math.max(0, z.freeze - dt);
@@ -1365,11 +1382,10 @@ export class Engine {
       if (z.laneChange.elapsed >= 0.6) z.laneChange = undefined;
     }
     z.age += dt;
-    z.timer -= dt;
+    z.timer -= clock;
     z.action = "walk";
     if (z.jump) {
       z.action = "jump";
-      const clock = z.slow > 0 ? dt * 0.5 : dt;
       z.jump.elapsed = Math.min(z.jump.duration, z.jump.elapsed + clock);
       const progress = z.jump.elapsed / z.jump.duration;
       z.x = z.jump.from + (z.jump.to - z.jump.from) * progress;
@@ -1383,11 +1399,19 @@ export class Engine {
     if (z.special) {
       z.action = "special";
       const action = z.special;
-      const clock = z.slow > 0 ? dt * 0.5 : dt;
       action.elapsed = Math.min(action.duration, action.elapsed + clock);
       if (!action.hit && action.elapsed >= action.duration * 0.5) {
         action.hit = true;
-        if (action.kind === "throw") {
+        if (action.kind === "summon") {
+          for (const row of [z.row - 1, z.row + 1]) {
+            if (row < 0 || row >= this.level.rows || this.water(row)) continue;
+            this.spawn("backup", row, z.x);
+            const dancer = this.zombies.at(-1)!;
+            dancer.ally = z.ally;
+            dancer.reverse = z.reverse;
+            this.effect(z.x, row, "land", "backup");
+          }
+        } else if (action.kind === "throw") {
           this.spawn("imp", z.row, z.x);
           const imp = this.zombies.at(-1)!;
           imp.ally = z.ally;
@@ -1438,23 +1462,30 @@ export class Engine {
       z.action = "special";
       if (z.age > 5) {
         const p = this.at(z.row, Math.round(z.x), "main");
-        if (p && !this.protected(z.row, z.x)) this.remove(p);
+        if (p && !z.ally && !this.protected(z.row, z.x)) this.remove(p, true);
         z.hp = 0;
       }
       return;
     }
     if (z.id === "jack" && z.age > 15 && this.random() < dt * 0.2) {
-      for (const p of [...this.plants])
-        if (Math.abs(p.row - z.row) <= 1 && Math.abs(p.col - z.x) < 1.5)
-          this.remove(p);
+      if (z.ally) {
+        for (const enemy of this.zombies)
+          if (!enemy.ally && Math.abs(enemy.row - z.row) <= 1 && Math.abs(enemy.x - z.x) < 1.5)
+            this.damage(enemy, 1800, true);
+      } else {
+        for (const p of [...this.plants])
+          if (Math.abs(p.row - z.row) <= 1 && Math.abs(p.col - z.x) < 1.5)
+            this.remove(p, true);
+      }
       this.effect(z.x, z.row, "boom");
       z.hp = 0;
       return;
     }
     if (z.id === "dancer" && z.timer <= 0) {
-      for (const row of [z.row - 1, z.row + 1])
-        if (row >= 0 && row < this.level.rows) this.spawn("backup", row, z.x);
       z.timer = 18;
+      z.special = { kind: "summon", elapsed: 0, duration: 0.9, hit: false };
+      z.action = "special";
+      return;
     }
     if (z.id === "garg" && z.hp < z.max / 2 && !z.thrown) {
       z.thrown = true;
@@ -1462,11 +1493,11 @@ export class Engine {
       z.action = "special";
       return;
     }
-    if (z.id === "catapult" && z.x > 7 && z.age < 30) {
+    if (z.id === "catapult" && !z.ally && z.x > 7 && z.age < 30) {
       z.action = "special";
       if (z.timer <= 0) {
         const p = this.plants.find(
-          (p) => p.row === z.row && p.layer === "main",
+          (p) => p.hp > 0 && p.row === z.row && p.layer === "main",
         );
         if (p && !this.protected(p.row, p.col)) {
           p.hp -= 100;
@@ -1520,6 +1551,7 @@ export class Engine {
       .filter(
         (p) =>
           p.row === z.row &&
+          p.hp > 0 &&
           Math.abs(p.col - z.x) < 0.45 &&
           plantById[p.id].kind !== "spike",
       )
@@ -1561,7 +1593,7 @@ export class Engine {
         !z.jumped &&
         target.id !== "tallnut"
       ) {
-        z.jump = { from: z.x, to: z.x - 1.25, elapsed: 0, duration: 0.85, kind: "vault" };
+        z.jump = { from: z.x, to: z.x - 1.25, elapsed: 0, duration: 0.85, kind: "vault", fromHeight: jumpHeight(z) };
         z.action = "jump";
         this.effect(z.x, z.row, "jump");
         if (z.id !== "pogo") z.jumped = true;
@@ -1598,7 +1630,7 @@ export class Engine {
     let speed = (d.speed / 96) * this.settings.speed * (z.boost ?? 1);
     if (z.id === "paper" && z.armor === 0) speed *= 2.8;
     if (z.jumped && ["pole", "dolphin"].includes(z.id)) speed *= 0.5;
-    if (z.slow > 0) speed *= 0.5;
+    if (slowed) speed *= 0.5;
     z.x += speed * dt * (z.reverse ? 1 : -1);
     if (
       this.level.mode === "normal" &&
@@ -1641,7 +1673,9 @@ export class Engine {
         else this.spareMowers[z.row] = false;
         for (const q of this.zombies) if (q.row === z.row && !q.ally) q.hp = 0;
         this.effect(0, z.row, "mower");
-        this.say("割草机出动！这一行已失去最后的保护");
+        this.say(this.spareMowers[z.row]
+          ? "割草机出动！这一行还有一台备用车"
+          : "割草机出动！这一行已失去最后的保护");
       } else this.status = "lost";
     }
   }

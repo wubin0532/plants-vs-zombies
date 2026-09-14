@@ -10,8 +10,12 @@ import {
   zombieAppearance,
   motionSheet,
   chomperFrame,
+  articulatedPlants,
+  plantHeadPose,
+  zombiePose,
 } from "./animation";
 import { plantScale, zombieScale } from "./proportions";
+import { bakeMower } from "./mower";
 import type { GardenAudio } from "./audio";
 export type RenderOptions = {
   audio?: GardenAudio;
@@ -29,6 +33,12 @@ export class GardenScene extends Phaser.Scene {
   >();
   graphics!: Phaser.GameObjects.Graphics;
   fog!: Phaser.GameObjects.Graphics;
+  terrain!: Phaser.GameObjects.Graphics;
+  terrainCache!: Phaser.GameObjects.RenderTexture;
+  fogCache!: Phaser.GameObjects.RenderTexture;
+  terrainKey = "";
+  fogKey = "";
+  keep = new Set<string>();
   hover!: Phaser.GameObjects.Rectangle;
   ghost!: Phaser.GameObjects.Image;
   acc = 0;
@@ -70,9 +80,7 @@ export class GardenScene extends Phaser.Scene {
   }
   create() {
     this.add.image(600, 345, "garden").setDisplaySize(1200, 690);
-    for (const z of zombies)
-      if (!(sequenceZombies as readonly string[]).includes(z.id))
-        bakeZombie(this, z.id);
+    bakeMower(this);
     for (const id of ["cone", "bucket"]) {
       const texture = this.textures.createCanvas("armor-" + id, 160, 80)!;
       texture.context.drawImage(
@@ -108,7 +116,10 @@ export class GardenScene extends Phaser.Scene {
         BOARD.top + BOARD.lawnHeight,
       );
     this.graphics = this.add.graphics().setDepth(80);
-    this.fog = this.add.graphics().setDepth(100);
+    this.terrain = this.add.graphics().setVisible(false);
+    this.fog = this.add.graphics().setVisible(false);
+    this.terrainCache = this.add.renderTexture(0, 0, 1200, 690).setDepth(79);
+    this.fogCache = this.add.renderTexture(0, 0, 1200, 690).setDepth(100);
     this.hover = this.add
       .rectangle(
         0,
@@ -190,19 +201,23 @@ export class GardenScene extends Phaser.Scene {
     height: number,
     depth: number,
   ) {
+    if (texture.startsWith("anim-") && !this.textures.exists(texture))
+      bakeZombie(this, texture.slice(5));
     let obj = this.objects.get(key) as Phaser.GameObjects.Image;
     if (!obj) {
       obj = this.add.image(x, y, texture);
       this.objects.set(key, obj);
     }
     if (obj.texture.key !== texture) obj.setTexture(texture);
+    // Phaser queues a display-list sort even when setDepth receives the same value.
+    if (obj.depth !== depth) obj.setDepth(depth);
     obj
       .setPosition(x, y)
       .setDisplaySize(width, height)
-      .setDepth(depth)
       .setOrigin(0.5)
       .setAlpha(1)
-      .setAngle(0);
+      .setAngle(0)
+      .clearTint();
     return obj;
   }
   update(_time: number, delta: number) {
@@ -216,9 +231,16 @@ export class GardenScene extends Phaser.Scene {
         e.timeScale *
         (e.winDelay >= 0 ? 0.3 : 1);
     while (this.acc >= 1 / 60) {
-      this.previous.clear();
-      for (const z of e.zombies)
-        this.previous.set(z.uid, { x: z.x, row: z.row, h: jumpHeight(z) });
+      for (const z of e.zombies) {
+        let previous = this.previous.get(z.uid);
+        if (!previous) {
+          previous = { x: z.x, row: z.row, h: 0 };
+          this.previous.set(z.uid, previous);
+        }
+        previous.x = z.x;
+        previous.row = z.row;
+        previous.h = jumpHeight(z);
+      }
       e.step(1 / 60);
       this.acc -= 1 / 60;
     }
@@ -240,31 +262,39 @@ export class GardenScene extends Phaser.Scene {
       this.lastNotify = _time;
     }
 
-    const keep = new Set<string>();
+    const keep = this.keep;
+    keep.clear();
     const g = this.graphics;
     g.clear();
-    for (const tile of e.tiles) {
-      const x = this.x(tile.col),
-        y = this.y(tile.row);
-      if (tile.type === "grave") {
-        g.fillStyle(0x77887d);
-        g.fillRoundedRect(x - 25, y - 30, 50, 61, 13);
-        g.lineStyle(3, 0x536456);
-        g.strokeRoundedRect(x - 25, y - 30, 50, 61, 13);
-        g.lineStyle(4, 0xa8b4a0);
-        g.lineBetween(x, y - 15, x, y + 9);
-        g.lineBetween(x - 10, y - 6, x + 10, y - 6);
-      } else if (tile.type === "vase") {
-        g.fillStyle(0xb79b73);
-        g.fillEllipse(x, y + 1, 47, 55);
-        g.fillRoundedRect(x - 17, y - 34, 34, 14, 3);
-        g.lineStyle(3, 0x735c48);
-        g.strokeEllipse(x, y + 1, 47, 55);
-        g.lineBetween(x - 17, y - 16, x + 17, y - 16);
-      } else {
-        g.fillStyle(tile.type === "ice" ? 0xc6e4df : 0x466038, 0.65);
-        g.fillEllipse(x, y + 20, 84, 27);
+    const terrainKey = e.tiles.map(t => `${t.type}:${t.row}:${t.col}`).join("|");
+    if (terrainKey !== this.terrainKey) {
+      this.terrainKey = terrainKey;
+      const g = this.terrain;
+      g.clear();
+      for (const tile of e.tiles) {
+        const x = this.x(tile.col),
+          y = this.y(tile.row);
+        if (tile.type === "grave") {
+          g.fillStyle(0x77887d);
+          g.fillRoundedRect(x - 25, y - 30, 50, 61, 13);
+          g.lineStyle(3, 0x536456);
+          g.strokeRoundedRect(x - 25, y - 30, 50, 61, 13);
+          g.lineStyle(4, 0xa8b4a0);
+          g.lineBetween(x, y - 15, x, y + 9);
+          g.lineBetween(x - 10, y - 6, x + 10, y - 6);
+        } else if (tile.type === "vase") {
+          g.fillStyle(0xb79b73);
+          g.fillEllipse(x, y + 1, 47, 55);
+          g.fillRoundedRect(x - 17, y - 34, 34, 14, 3);
+          g.lineStyle(3, 0x735c48);
+          g.strokeEllipse(x, y + 1, 47, 55);
+          g.lineBetween(x - 17, y - 16, x + 17, y - 16);
+        } else {
+          g.fillStyle(tile.type === "ice" ? 0xc6e4df : 0x466038, 0.65);
+          g.fillEllipse(x, y + 20, 84, 27);
+        }
       }
+      this.terrainCache.clear().draw(g);
     }
     for (const p of e.plants) {
       const key = "p" + p.uid;
@@ -316,6 +346,24 @@ export class GardenScene extends Phaser.Scene {
       obj.setAngle(
         stable ? 0 : Math.sin(e.time * 2 + p.uid) * 0.7 - recoil * 2,
       );
+      if (articulatedPlants.has(p.id)) {
+        const texture = this.textures.get(p.id);
+        if (!texture.has("roots")) {
+          texture.add("roots", 0, 0, 104, 160, 56);
+          texture.add("head", 0, 0, 0, 160, 108);
+        }
+        const unit = 86 * bodyScale / 160;
+        obj.setFrame("roots").setOrigin(0.5, 48 / 56)
+          .setDisplaySize(160 * unit, 56 * unit).setAngle(0);
+        const headKey = key + "head";
+        keep.add(headKey);
+        const head = this.sprite(headKey, p.id, obj.x, obj.y - 48 * unit,
+          160 * unit, 108 * unit, obj.depth + 0.1);
+        const pose = plantHeadPose(p, plantById[p.id].kind);
+        head.setFrame("head").setOrigin(0.5, 104 / 108)
+          .setDisplaySize(160 * unit * pose.scaleX, 108 * unit * pose.scaleY)
+          .setAngle(pose.angle).setAlpha(p.sleep ? 0.65 : 1);
+      }
       if (
         ["cherry", "doom", "jalapeno"].includes(p.id) &&
         p.age < 1 &&
@@ -389,6 +437,8 @@ export class GardenScene extends Phaser.Scene {
         .setOrigin(0.5, appearance.origin)
         .setFlipX(z.reverse)
         .setAlpha(z.underground ? 0.25 : 1);
+      const pose = zombiePose(z);
+      obj.setAngle(pose.angle);
       obj.setTint(
         z.freeze > 0
           ? 0x9edbec
@@ -411,12 +461,11 @@ export class GardenScene extends Phaser.Scene {
           top = obj.y - appearance.extent * scale - 7;
         const health = healthFraction(z.hp, z.max);
         g.fillStyle(0x1b2726, 0.85);
-        g.fillRoundedRect(
+        g.fillRect(
           left - 2,
           top - 2,
           width + 4,
           z.maxArmor > 0 && z.armor > 0 ? 13 : 8,
-          3,
         );
         g.fillStyle(
           health > 0.5 ? 0x88ca58 : health > 0.25 ? 0xf1c552 : 0xe26958,
@@ -504,7 +553,9 @@ export class GardenScene extends Phaser.Scene {
     }
     const quality = this.options.quality?.() || "high";
     const limit = quality === "low" ? 32 : quality === "medium" ? 60 : 90;
-    for (const fx of e.effects.slice(-limit)) {
+    for (let fxIndex = Math.max(0, e.effects.length - limit); fxIndex < e.effects.length; fxIndex++) {
+      const fx = e.effects[fxIndex];
+      if (fx.type === "mower") continue;
       const t = 1 - fx.life / fx.duration,
         x = this.x(fx.x),
         y = this.y(fx.row),
@@ -618,7 +669,7 @@ export class GardenScene extends Phaser.Scene {
             .setDisplaySize(appearance.width * scale, appearance.height * scale)
             .setOrigin(0.5, appearance.origin)
             .setFlipX(z.reverse)
-            .setAngle(t * 78 * (z.reverse ? -1 : 1))
+            .setAngle(zombiePose(z).angle + t * 78 * (z.reverse ? -1 : 1))
             .setAlpha(1 - t);
         } else
           this.sprite(key, "z-" + fx.source, x, y + 15, 78, 98, 65)
@@ -628,9 +679,6 @@ export class GardenScene extends Phaser.Scene {
       } else if (fx.type === "shoot") {
         frame = 15;
         size = 23;
-      } else if (fx.type === "mower") {
-        frame = 10;
-        size = 80;
       }
       keep.add(key);
       const image = this.sprite(
@@ -662,31 +710,26 @@ export class GardenScene extends Phaser.Scene {
             .setAngle(i * 60 + t * 90);
         }
     }
+    const drawMower = (key: string, x: number, row: number, spare = false, moving = false) => {
+      keep.add(key);
+      const size = spare ? 57 : 82;
+      this.sprite(key, "mower", x, feetY(row, e.level.rows) - (spare ? 30 : 0),
+        size, size * 0.75, 81)
+        .setFrame(moving ? Math.floor(e.time * 28) % 4 : 0)
+        .setDisplaySize(size, size * 0.75)
+        .setOrigin(0.5, 89 / 96)
+        .setAlpha(spare ? 0.72 : 1);
+    };
     for (let r = 0; r < e.level.rows; r++) {
-      if (e.spareMowers[r]) {
-        const x = BOARD.mowerX,
-          y = this.y(r) - 8;
-        g.fillStyle(0x526b4c);
-        g.fillRoundedRect(x - 12, y - 10, 24, 14, 4);
-        g.fillStyle(0xd69459);
-        g.fillRoundedRect(x - 8, y - 14, 14, 9, 2);
-        g.fillStyle(0x3c4d3d);
-        g.fillCircle(x - 7, y + 4, 4);
-        g.fillCircle(x + 7, y + 4, 4);
-      }
-      if (e.mowers[r]) {
-        const x = BOARD.mowerX,
-          y = this.y(r) + 19;
-        g.fillStyle(0x526b4c);
-        g.fillRoundedRect(x - 18, y - 14, 35, 20, 5);
-        g.fillStyle(0xd69459);
-        g.fillRoundedRect(x - 12, y - 20, 20, 13, 3);
-        g.fillStyle(0x3c4d3d);
-        g.fillCircle(x - 11, y + 5, 6);
-        g.fillCircle(x + 11, y + 5, 6);
-        g.lineStyle(3, 0xc5c2a4);
-        g.lineBetween(x - 8, y - 16, x - 14, y - 34);
-      }
+      if (e.spareMowers[r]) drawMower("mower-spare-" + r, BOARD.mowerX - 8, r, true);
+      if (e.mowers[r]) drawMower("mower-ready-" + r, BOARD.mowerX, r);
+    }
+    // Safety feedback must survive the cosmetic effect budget on crowded waves.
+    for (const fx of e.effects) {
+      if (fx.type !== "mower") continue;
+      const progress = 1 - fx.life / fx.duration;
+      const x = BOARD.mowerX + (BOARD.width + 60 - BOARD.mowerX) * progress * progress;
+      drawMower("mower-run-" + fx.uid, x, fx.row, false, true);
     }
     if (e.level.mode === "boss") {
       const key = "boss";
@@ -703,16 +746,24 @@ export class GardenScene extends Phaser.Scene {
       if (!keep.has(k)) {
         obj.destroy();
         this.objects.delete(k);
+        if (k.startsWith("z")) this.previous.delete(Number(k.slice(1)));
       }
-    this.fog.clear();
-    if (
+    // A zombie may spawn and die between renders, without ever owning a sprite.
+    for (const uid of this.previous.keys())
+      if (!keep.has("z" + uid)) this.previous.delete(uid);
+    const fogVisible =
       e.level.scene === "fog" &&
       e.fogClear <= 0 &&
-      !(e.level.mode === "storm" && e.time % 8 < 1)
-    ) {
+      !(e.level.mode === "storm" && e.time % 8 < 1);
+    const lanterns = e.plants.filter(p => p.id === "lantern");
+    const fogKey = `${fogVisible}:${e.level.rows}:` + lanterns.map(p => `${p.row},${p.col}`).join(";");
+    if (fogKey === this.fogKey) return;
+    this.fogKey = fogKey;
+    this.fog.clear();
+    if (fogVisible) {
       for (let r = 0; r < e.level.rows; r++)
         for (let c = 4; c < 9; c++) {
-          const lit = e.plants.some(
+          const lit = lanterns.some(
             (p) =>
               p.id === "lantern" &&
               Math.abs(p.col - c) <= 2 &&
@@ -730,5 +781,6 @@ export class GardenScene extends Phaser.Scene {
           }
         }
     }
+    this.fogCache.clear().draw(this.fog);
   }
 }
