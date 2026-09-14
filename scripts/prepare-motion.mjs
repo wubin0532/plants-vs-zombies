@@ -131,7 +131,7 @@ for (const [id, spec] of Object.entries(specifications)) {
     },
   })
     .composite(cells)
-    .png()
-    .toFile(`public/assets/animation/${id}.png`);
+    .webp({ quality: 80 })
+    .toFile(`public/assets/animation/${id}.webp`);
   console.log(`${id}: ${count} frames; uniform scale ${factor.toFixed(3)}`);
 }

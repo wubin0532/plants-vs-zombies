@@ -76,6 +76,8 @@ function defend(e: Engine) {
     }
   }
 }
+// 自动玩家会输一部分后期关卡（不作为难度验收）；聚合统计保证高波次路径覆盖
+const highWave = { total: 0, reached: 0 };
 for (const l of levels)
   it(`关卡 ${l.label} 使用真实经济的自动玩家能推进并结算`, () => {
     const candidates =
@@ -127,4 +129,14 @@ for (const l of levels)
     expect(["won", "lost"]).toContain(e.status);
     // This test detects deadlocked levels; a scripted player is not a difficulty acceptance test.
     expect(Number.isFinite(e.sun) && e.sun >= 0).toBe(true);
+    if (e.status === "won" && e.totalWaves >= 10)
+      expect(e.wave, "通关必须跑到最终波").toBe(e.totalWaves);
+    if (e.totalWaves >= 10) {
+      highWave.total++;
+      if (e.wave >= e.totalWaves) highWave.reached++;
+    }
   });
+it("高波次回归覆盖：≥10 波的关卡至少六成跑到最终波", () => {
+  expect(highWave.total).toBeGreaterThan(30);
+  expect(highWave.reached / highWave.total).toBeGreaterThanOrEqual(0.6);
+});

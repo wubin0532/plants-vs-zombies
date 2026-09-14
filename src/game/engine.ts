@@ -1,5 +1,6 @@
 import { jumpHeight } from "./animation";
 import { plantSound, type SoundEvent, type SoundKind } from "./audio";
+import { laneStrength, tiltFor, unitPrice } from "./director";
 import {
   battleSettings,
   makeWaves,
@@ -188,6 +189,18 @@ export class Engine {
   }[] = [];
   private uid = 1;
   private guided = new Set<string>();
+  private livingCache: Zombie[] | null = null;
+  private queuedMessages: string[] = [];
+  private wavePlan: string[] = [];
+  private unitWaves = new Map<string, number>();
+  private killTimes: number[] = [];
+  private streakAt = -10;
+  plantsLost = 0;
+  mowersLost = 0;
+  assaultAlert: { at: number; row: number } | null = null;
+  eventAt = -1;
+  eventKind: "" | "rain" | "wind" = "";
+  rainUntil = 0;
   private rng: number;
   private natural = 4;
   private nextSpawn = 22;
@@ -237,6 +250,10 @@ export class Engine {
       this.addBelt();
       this.addBelt();
     }
+    if (this.level.mode === "normal") {
+      this.eventAt = this.settings.duration * (0.3 + this.random() * 0.4);
+      this.eventKind = this.random() < 0.5 ? "rain" : "wind";
+    }
   }
   get isBelt() {
     return ["conveyor", "bowling", "storm", "boss", "vases"].includes(
@@ -248,9 +265,22 @@ export class Engine {
     return this.rng / 4294967296;
   }
   say(s: string, tone: "info" | "alert" = "info") {
+    if (
+      tone === "info" &&
+      this.messageTone === "alert" &&
+      this.time < this.messageUntil
+    ) {
+      if (this.queuedMessages.length < 8) this.queuedMessages.push(s);
+      return;
+    }
     this.message = s;
     this.messageTone = tone;
     this.messageUntil = this.time + 4;
+  }
+  private livingEnemies() {
+    return (this.livingCache ??= this.zombies.filter(
+      (z) => z.hp > 0 && !z.ally && !z.underground,
+    ));
   }
   private guide(step: string, text: string): boolean {
     if (this.level.id > 3 || this.guided.has(step)) return false;
@@ -506,13 +536,148 @@ export class Engine {
     if (this.water(2) && this.random() < 0.25) pool = ["lily"];
     this.conveyor.push(pool[Math.floor(this.random() * pool.length)] || "pea");
   }
+  composeWave(wave: number): string[] {
+    const slots = this.schedule.reduce((n, e) => n + (e.wave === wave ? 1 : 0), 0);
+    const progress = (wave - 1) / Math.max(1, this.totalWaves - 1);
+    const unlocked = this.level.enemies
+      .slice(
+        0,
+        Math.max(
+          1,
+          Math.ceil(this.level.enemies.length * Math.min(1, 0.3 + progress)),
+        ),
+      )
+      .filter((id) => unitPrice[id]);
+    const novice = this.level.id <= 3 || this.settings.difficulty === "casual";
+    const average =
+      unlocked.reduce((s, id) => s + unitPrice[id], 0) / unlocked.length;
+    let budget = Math.ceil(slots * average);
+    const rich = !novice && this.sun > 400 ? 1.25 : 0;
+    const dominant =
+      !novice &&
+      this.sun > 600 &&
+      this.mowersLost === 0 &&
+      this.livingEnemies().length <= 3
+        ? 1.2
+        : 0;
+    let factor = Math.max(1, rich, dominant);
+    if (!novice) {
+      let rubber = 1;
+      if (this.mowersLost > 0) rubber -= 0.2;
+      if (this.plantsLost >= 4) rubber -= 0.2;
+      factor *= Math.max(0.6, rubber);
+    }
+    budget = Math.ceil(budget * factor);
+    const next = wave + 1;
+    if (
+      !novice &&
+      next <= this.totalWaves &&
+      (next % 4 === 0 || next === this.totalWaves)
+    ) {
+      const nextAt = this.schedule.find((e) => e.wave === next)?.at;
+      if (nextAt !== undefined) {
+        let weakest = 0;
+        for (let r = 1; r < this.level.rows; r++)
+          if (
+            laneStrength(this.plants, this.zombies, r) <
+            laneStrength(this.plants, this.zombies, weakest)
+          )
+            weakest = r;
+        this.assaultAlert = { at: Math.max(this.time, nextAt - 4), row: weakest };
+      }
+    }
+    const weights = new Map(unlocked.map((id) => [id, 1]));
+    const boost = (ids: string[], factor: number) => {
+      const f = novice ? 1 + (factor - 1) / 2 : factor;
+      for (const id of ids)
+        if (weights.has(id)) weights.set(id, weights.get(id)! * f);
+    };
+    let wallShooterRows = 0,
+      waterOpen = false;
+    const rowCost = Array(this.level.rows).fill(0);
+    for (let r = 0; r < this.level.rows; r++) {
+      const ps = this.plants.filter((p) => p.row === r);
+      if (
+        ps.some((p) => ["wall", "armor"].includes(plantById[p.id].kind)) &&
+        ps.some((p) => plantById[p.id].damage)
+      )
+        wallShooterRows++;
+      if (this.water(r) && !ps.some((p) => plantById[p.id].damage))
+        waterOpen = true;
+      for (const p of ps) rowCost[r] += plantById[p.id].cost;
+    }
+    if (wallShooterRows >= 2)
+      boost(["pole", "dolphin", "pogo", "ladder", "digger"], 3);
+    if (this.plants.some((p) => p.id === "tallnut"))
+      boost(["balloon", "catapult"], 3);
+    if (this.plants.length > this.level.rows * 4) boost(["jack", "garg"], 2.5);
+    const meanCost = rowCost.reduce((a, b) => a + b, 0) / this.level.rows;
+    if (Math.max(...rowCost) > Math.max(300, meanCost * 2)) boost(["bungee"], 3);
+    if (waterOpen) boost(["snorkel", "dolphin"], 3);
+    const available = unlocked.filter((id) => {
+      const last = this.unitWaves.get(id);
+      if (last === undefined) return true;
+      const gap = ["garg"].includes(id)
+        ? 2
+        : ["football", "zomboni", "catapult"].includes(id)
+          ? 1
+          : 0;
+      return wave - last > gap;
+    });
+    const usable = available.length ? available : unlocked;
+    const plan: string[] = [];
+    while (plan.length < slots && budget > 0) {
+      const affordable = usable.filter((id) => unitPrice[id] <= budget);
+      if (!affordable.length) break;
+      let roll =
+        this.random() * affordable.reduce((s, id) => s + weights.get(id)!, 0);
+      let pick = affordable[0];
+      for (const id of affordable) {
+        roll -= weights.get(id)!;
+        if (roll <= 0) {
+          pick = id;
+          break;
+        }
+      }
+      plan.push(pick);
+      budget -= unitPrice[pick];
+    }
+    if (!plan.length) plan.push(usable[0]);
+    if (wave % 4 === 0 || wave === this.totalWaves) plan[0] = "flag";
+    for (const id of new Set(plan)) this.unitWaves.set(id, wave);
+    return plan;
+  }
+  private pickRow(id: string): number {
+    const rows = Array.from({ length: this.level.rows }, (_, r) => r);
+    const land = rows.filter((r) => !this.water(r));
+    const candidates = ["balloon", "bungee"].includes(id)
+      ? rows
+      : land.length
+        ? land
+        : rows;
+    if (!["normal", "conveyor", "storm"].includes(this.level.mode))
+      return candidates[Math.floor(this.random() * candidates.length)];
+    const [weakP, strongP] = tiltFor(this.level.id, this.settings.difficulty);
+    const roll = this.random();
+    if (roll >= weakP && roll < 1 - strongP)
+      return candidates[Math.floor(this.random() * candidates.length)];
+    const order = candidates
+      .map((r) => ({
+        r,
+        s: laneStrength(this.plants, this.zombies, r),
+        j: this.random(),
+      }))
+      .sort((a, b) => a.s - b.s || a.j - b.j);
+    const band = roll < weakP ? order.slice(0, 2) : order.slice(-2);
+    return band[Math.floor(this.random() * band.length)].r;
+  }
   spawn(id: string, row?: number, x = 9.6) {
     const d = zombieById[id];
     if (!d) return;
-    let r = row ?? Math.floor(this.random() * this.level.rows);
     const aquatic = ["ducky", "snorkel", "dolphin"].includes(id);
-    if (aquatic) r = 2 + Math.floor(this.random() * 2);
-    else if (
+    let r = aquatic ? 2 + Math.floor(this.random() * 2) : (row ?? this.pickRow(id));
+    if (
+      !aquatic &&
       row === undefined &&
       this.water(r) &&
       !["balloon", "bungee"].includes(id)
@@ -558,6 +723,7 @@ export class Engine {
       rest -= used;
     }
     z.hp -= rest;
+    if (z.hp <= 0) this.livingCache = null;
     if (oldArmor > 0 && z.armor === 0) {
       this.effect(z.x, z.row, "break", z.id);
       this.sound("break", z.x, z.id);
@@ -660,6 +826,35 @@ export class Engine {
     if (this.paused || this.status !== "playing") return;
     dt = Math.min(dt, 0.1);
     this.time += dt;
+    this.livingCache = null;
+    if (this.time >= this.messageUntil && this.queuedMessages.length) {
+      this.message = this.queuedMessages.shift()!;
+      this.messageTone = "info";
+      this.messageUntil = this.time + 4;
+    }
+    if (this.assaultAlert && this.time >= this.assaultAlert.at) {
+      this.say(`僵尸主力瞄准了第 ${this.assaultAlert.row + 1} 行！`, "alert");
+      this.assaultAlert = null;
+    }
+    if (this.eventAt > 0 && this.time >= this.eventAt) {
+      this.eventAt = -1;
+      if (this.eventKind === "rain") {
+        this.rainUntil = this.time + 10;
+        for (const p of this.plants)
+          if (plantById[p.id].kind === "sun")
+            this.token(
+              p.col,
+              p.row,
+              p.id === "twin" ? 50 : p.id === "sunshroom" && p.age < 120 ? 15 : 25,
+            );
+        this.say("阳光雨！向日葵立刻产出，阳光掉落加速");
+        this.sound("sun");
+      } else {
+        for (const z of this.zombies) z.slow = Math.max(z.slow, 5);
+        this.say("寒风过境！僵尸们被冻得行动迟缓");
+        this.sound("frost");
+      }
+    }
     for (const p of this.plants)
       if (p.attackAge !== undefined) p.attackAge += dt;
     this.fogClear = Math.max(0, this.fogClear - dt);
@@ -679,7 +874,7 @@ export class Engine {
           0.4 + this.random() * 7.8,
           this.random() * (this.level.rows - 1),
         );
-        this.natural = 6;
+        this.natural = this.time < this.rainUntil ? 3 : 6;
       }
     }
     if (this.isBelt) {
@@ -699,15 +894,23 @@ export class Engine {
         if (event.wave === this.totalWaves) this.sound("horn");
         if (event.wave % 4 === 0 || event.wave === this.totalWaves)
           this.say("一大波僵尸正在接近！");
+        if (this.level.mode !== "whack") this.wavePlan = this.composeWave(event.wave);
       }
+      const id =
+        this.level.mode === "whack"
+          ? event.id
+          : this.wavePlan.length
+            ? this.wavePlan.shift()!
+            : null;
+      if (!id) continue;
       this.spawn(
-        event.id,
+        id,
         undefined,
         this.level.mode === "whack" ? 4 + this.random() * 4 : 9.6,
       );
       if (
         this.level.mode === "normal" &&
-        !DANGER_ZOMBIES.has(event.id) &&
+        !DANGER_ZOMBIES.has(id) &&
         this.random() < 0.02
       ) {
         this.zombies.at(-1)!.golden = true;
@@ -730,7 +933,7 @@ export class Engine {
           this.sound("danger");
         }
       }
-      this.warnDanger(event.id);
+      this.warnDanger(id);
       if (this.spawned === this.schedule.length && this.level.scene === "night")
         for (const tile of this.tiles)
           if (tile.type === "grave") this.spawn("basic", tile.row, tile.col);
@@ -749,9 +952,7 @@ export class Engine {
       p.timer -= dt;
       if (p.digest) p.digest = Math.max(0, p.digest - dt);
       const d = plantById[p.id];
-      const targets = this.zombies.filter(
-        (z) => z.hp > 0 && !z.ally && !z.underground,
-      );
+      const targets = this.livingEnemies();
       const ahead = targets
         .filter(
           (z) =>
@@ -810,7 +1011,11 @@ export class Engine {
             this.bossBall = null;
         }
         if (d.kind === "blover") {
-          for (const z of targets) if (z.flying) z.hp = 0;
+          for (const z of targets)
+            if (z.flying) {
+              z.hp = 0;
+              this.livingCache = null;
+            }
           this.fogClear = 20;
           this.effect(p.col, p.row, "ice", p.id);
         }
@@ -873,6 +1078,7 @@ export class Engine {
             this.damage(z, d.damage!, true);
             if (["zomboni", "catapult"].includes(z.id)) {
               z.hp = 0;
+              this.livingCache = null;
               p.hp -= 300;
               p.hurt = 0.2;
               if (p.id === "spike") p.hp = 0;
@@ -1102,8 +1308,23 @@ export class Engine {
       if (z.golden)
         this.token(z.x, z.row, 100 + Math.floor(this.random() * 101), true);
     }
+    const killsNow = dead.filter((z) => !z.ally);
+    if (killsNow.length) {
+      this.killTimes = this.killTimes.filter((t) => this.time - t <= 3);
+      for (let i = 0; i < killsNow.length; i++) this.killTimes.push(this.time);
+      if (this.killTimes.length >= 4 && this.time - this.streakAt > 10) {
+        this.streakAt = this.time;
+        this.killTimes = [];
+        const last = killsNow.at(-1)!;
+        this.token(last.x, last.row, 25);
+        this.say("连杀奖励！+25 阳光");
+        this.sound("sun");
+      }
+    }
     this.zombies = this.zombies.filter((z) => z.hp > 0 && z.x > -2 && z.x < 12);
+    const alivePlants = this.plants.length;
     this.plants = this.plants.filter((p) => p.hp > 0);
+    this.plantsLost += alivePlants - this.plants.length;
     if (
       this.status === "playing" &&
       ((this.level.mode === "boss" && this.bossHp <= 0) ||
@@ -1415,6 +1636,7 @@ export class Engine {
     }
     if (z.x < -0.65 && !z.ally) {
       if (this.mowers[z.row] || this.spareMowers[z.row]) {
+        this.mowersLost++;
         if (this.mowers[z.row]) this.mowers[z.row] = false;
         else this.spareMowers[z.row] = false;
         for (const q of this.zombies) if (q.row === z.row && !q.ally) q.hp = 0;

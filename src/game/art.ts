@@ -1,8 +1,8 @@
 const base = import.meta.env.BASE_URL;
-export const plantImage = (id: string) => `${base}assets/portraits/p-${id}.png`;
+export const plantImage = (id: string) => `${base}assets/portraits/p-${id}.webp`;
 export const zombieImage = (id: string) =>
-  `${base}assets/portraits/z-${id}.png`;
+  `${base}assets/portraits/z-${id}.webp`;
 export const effectImage = (frame: number) =>
-  `${base}assets/fx/fx-${frame}.png`;
+  `${base}assets/fx/fx-${frame}.webp`;
 export const gardenImage = (scene = "day") =>
-  `${base}assets/backgrounds/${scene}.png`;
+  `${base}assets/backgrounds/${scene}.webp`;

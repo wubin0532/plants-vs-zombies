@@ -5,7 +5,7 @@ import {
 } from "./game/difficulty";
 import { defineStore } from "pinia";
 export type Save = {
-  version: 1;
+  version: 2;
   unlocked: number;
   completed: number[];
   coins: number;
@@ -15,6 +15,7 @@ export type Save = {
   quality: "low" | "medium" | "high";
   shake: boolean;
   stars: Record<number, number>;
+  lossStreak: Record<number, number>;
   daily: { date: string; best: number };
   achievements: string[];
   items: Record<string, number>;
@@ -30,7 +31,7 @@ export type Save = {
   }[];
 };
 export const initial = (): Save => ({
-  version: 1,
+  version: 2,
   unlocked: 1,
   completed: [],
   coins: 0,
@@ -40,6 +41,7 @@ export const initial = (): Save => ({
   quality: "high",
   shake: true,
   stars: {},
+  lossStreak: {},
   daily: { date: "", best: 0 },
   achievements: [],
   items: {},
@@ -50,10 +52,11 @@ export const initial = (): Save => ({
   scores: [],
 });
 export function validateSave(data: unknown): Save {
+  const version = (data as { version?: unknown })?.version;
   const d = data as Save;
   if (
     !d ||
-    d.version !== 1 ||
+    (version !== 1 && version !== 2) ||
     !Number.isInteger(d.unlocked) ||
     d.unlocked < 1 ||
     d.unlocked > 51 ||
@@ -70,8 +73,10 @@ export function validateSave(data: unknown): Save {
     d.unlocked !== Math.min(51, complete.length + 1)
   )
     throw Error("存档进度不完整，未覆盖当前进度");
+  // v1 → v2 迁移：v2 新增字段全部由下面的宽松校验补默认值。
   return {
     ...d,
+    version: 2,
     completed: complete,
     mix: Object.fromEntries(
       Object.entries(initial().mix).map(([key, value]) => [
@@ -99,6 +104,20 @@ export function validateSave(data: unknown): Save {
                 Number.isInteger(n) &&
                 n >= 0 &&
                 n <= 3,
+            ),
+          )
+        : {},
+    lossStreak:
+      d.lossStreak && typeof d.lossStreak === "object"
+        ? Object.fromEntries(
+            Object.entries(d.lossStreak).filter(
+              ([level, n]) =>
+                Number.isInteger(Number(level)) &&
+                Number(level) >= 1 &&
+                Number(level) <= 50 &&
+                Number.isInteger(n) &&
+                n >= 0 &&
+                n <= 99,
             ),
           )
         : {},
@@ -171,6 +190,11 @@ export const useSave = defineStore("save", {
         Math.min(51, level + 1),
       );
       this.data.coins += coins;
+      delete this.data.lossStreak[level];
+      this.persist();
+    },
+    recordLoss(level: number) {
+      this.data.lossStreak[level] = (this.data.lossStreak[level] ?? 0) + 1;
       this.persist();
     },
     record(level: number, seconds: number, options: BattleOptions) {

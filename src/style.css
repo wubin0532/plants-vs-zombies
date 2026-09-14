@@ -649,6 +649,89 @@ footer i {
   overflow: hidden;
   background: #7e9165;
   box-shadow: 0 10px 30px #304a3910;
+  position: relative;
+}
+.guide-bubble {
+  position: absolute;
+  z-index: 30;
+  background: #fffbe8;
+  border: 2px solid #d9a843;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: #5c5340;
+  max-width: 240px;
+  box-shadow: 0 6px 16px #304a3930;
+}
+.guide-bubble::after {
+  content: "";
+  position: absolute;
+  top: -8px;
+  left: 24px;
+  border: 8px solid transparent;
+  border-bottom-color: #d9a843;
+  border-top: 0;
+}
+.guide-bubble.anchor-sun {
+  top: 116px;
+  left: 18px;
+}
+.guide-bubble.anchor-seeds {
+  top: 116px;
+  left: 130px;
+}
+.difficulty-switch {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #77816a;
+}
+.difficulty-switch .active {
+  border-color: #8da564;
+  background: #e8edcf;
+}
+.difficulty-switch .recommend {
+  border-color: #d9a843;
+  box-shadow: 0 0 0 2px #d9a84355;
+  font-weight: 700;
+}
+.demo-overlay {
+  position: fixed;
+  inset: 0;
+  background: #22301ed0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 260;
+}
+.demo-card {
+  background: #fbfaf3;
+  border-radius: 14px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+}
+.demo-title {
+  margin: 0;
+  font-size: 14px;
+}
+.demo-title small {
+  color: #8b927c;
+  margin-left: 10px;
+  font-size: 10px;
+}
+.demo-mount {
+  width: 640px;
+  max-width: 86vw;
+}
+.demo-btn {
+  margin-top: 6px;
+  font-size: 10px;
+  padding: 3px 10px;
 }
 .seed-tray {
   display: flex;
@@ -1214,6 +1297,23 @@ body.font-large .in-game .modal {
   color: #d9a843;
   font-size: 11px;
   letter-spacing: 2px;
+}
+.level-best {
+  color: #77816a;
+}
+.seed-card {
+  position: relative;
+}
+.seed-card .badge {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  background: #d9a843;
+  color: #fff;
+  font-size: 8px;
+  font-style: normal;
+  border-radius: 3px;
+  padding: 1px 4px;
 }
 .level-grid .current {
   border-color: #8da564;

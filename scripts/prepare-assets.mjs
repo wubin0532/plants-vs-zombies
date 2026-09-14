@@ -49,8 +49,8 @@ async function split(
           top: h - m.height - 7,
         },
       ])
-      .png()
-      .toFile(`public/assets/${folder}/${prefix}${ids[i]}.png`);
+      .webp({ quality: 80 })
+      .toFile(`public/assets/${folder}/${prefix}${ids[i]}.webp`);
   }
 }
 await split("plants.png", 7, 7, plantIds, "p-", 160, 160);
@@ -67,34 +67,29 @@ await split(
 );
 await sharp(root + "day.png")
   .resize(1200, 690, { fit: "fill" })
-  .png()
-  .toFile("public/assets/backgrounds/day.png");
-await sharp("public/assets/backgrounds/day.png")
+  .webp({ quality: 80 })
+  .toFile("public/assets/backgrounds/day.webp");
+await sharp("public/assets/backgrounds/day.webp")
   .modulate({ brightness: 0.48, saturation: 0.65 })
   .tint("#778da9")
-  .png()
-  .toFile("public/assets/backgrounds/night.png");
-await sharp("public/assets/portraits/p-pea.png")
+  .webp({ quality: 80 })
+  .toFile("public/assets/backgrounds/night.webp");
+await sharp("public/assets/portraits/p-pea.webp")
   .resize(48, 48)
   .png()
   .toFile("public/favicon.png");
-console.log("Prepared 49 plant, 26 zombie, 16 VFX PNGs and backgrounds.");
+console.log("Prepared 49 plant, 26 zombie, 16 VFX WebPs and backgrounds.");
 await sharp(root + "pool.png")
   .resize(1200, 690, { fit: "fill" })
-  .png()
-  .toFile("public/assets/backgrounds/pool.png");
-await sharp("public/assets/backgrounds/pool.png")
-  .modulate({ brightness: 0.48, saturation: 0.65 })
-  .tint("#778da9")
-  .png()
-  .toFile("public/assets/backgrounds/fog.png");
+  .webp({ quality: 80 })
+  .toFile("public/assets/backgrounds/pool.webp");
 await sharp(root + "roof.png")
   .resize(1200, 690, { fit: "fill" })
-  .png()
-  .toFile("public/assets/backgrounds/roof.png");
+  .webp({ quality: 80 })
+  .toFile("public/assets/backgrounds/roof.webp");
 
 // Align the generated pool bands to the exact two water lanes, without moving the house.
-const pool = await sharp("public/assets/backgrounds/pool.png").png().toBuffer();
+const pool = await sharp("public/assets/backgrounds/pool.webp").png().toBuffer();
 const bands = [];
 for (const [from, to, start, end] of [
   [116, 252, 116, 284],
@@ -110,10 +105,10 @@ for (const [from, to, start, end] of [
 }
 await sharp(pool)
   .composite(bands)
-  .png()
-  .toFile("public/assets/backgrounds/pool.png");
-await sharp("public/assets/backgrounds/pool.png")
+  .webp({ quality: 80 })
+  .toFile("public/assets/backgrounds/pool.webp");
+await sharp("public/assets/backgrounds/pool.webp")
   .modulate({ brightness: 0.48, saturation: 0.65 })
   .tint("#778da9")
-  .png()
-  .toFile("public/assets/backgrounds/fog.png");
+  .webp({ quality: 80 })
+  .toFile("public/assets/backgrounds/fog.webp");

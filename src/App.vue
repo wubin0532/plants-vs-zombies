@@ -9,7 +9,15 @@ import {
   nextTick,
   markRaw,
 } from "vue";
-import { plants, plantById, zombies, worlds, levels } from "./game/content";
+import {
+  plants,
+  plantById,
+  zombies,
+  zombieById,
+  worlds,
+  levels,
+  isMushroom,
+} from "./game/content";
 import type { PlantDef, ZombieDef } from "./game/content";
 import { plantImage, zombieImage, gardenImage } from "./game/art";
 import { battleSettings, defaultOptions } from "./game/difficulty";
@@ -48,7 +56,8 @@ const chosen = ref<string[]>([]),
   full = ref(false),
   file = ref<HTMLInputElement>(),
   imitate = ref("pea");
-let game: ReturnType<typeof mountGame> | undefined;
+let game: Awaited<ReturnType<typeof mountGame>> | undefined;
+let lastRestartKey = -1e9;
 const audio = new GardenAudio();
 let settled = false;
 const level = computed(() => levels[levelId.value - 1]);
@@ -93,7 +102,7 @@ const stats = computed(() => {
     sun: e?.sun || 0,
     selected: e?.selected || "",
     paused: e?.paused || false,
-    progress: e ? Math.min(100, (e.spawned / e.level.count) * 100) : 0,
+    progress: e ? Math.min(100, (e.wave / e.totalWaves) * 100) : 0,
     message: e && e.time < e.messageUntil ? e.message : "",
     alert: !!(e && e.time < e.messageUntil && e.messageTone === "alert"),
     coins: e?.coins || 0,
@@ -109,6 +118,10 @@ const stats = computed(() => {
 const pa = plantImage,
   za = zombieImage;
 const tip = (item: PlantDef | ZombieDef) => ("tip" in item ? item.tip : "");
+const counterNames = (item: PlantDef | ZombieDef) =>
+  "counters" in item && item.counters.length
+    ? item.counters.map((id) => plantById[id].name).join("、")
+    : "";
 const loseTips = [
   "试试把坚果放在更靠前的位置。",
   "多种几株向日葵，阳光充足才有底气。",
@@ -116,6 +129,72 @@ const loseTips = [
   "土豆地雷便宜又实用，开局先埋几颗。",
 ];
 const daily = computed(() => dailyChallenge(new Date(), save.data.unlocked));
+const recommended = computed(
+  () =>
+    new Set(
+      level.value.enemies.flatMap((id) => zombieById[id]?.counters ?? []),
+    ),
+);
+const bestTimes = computed(() => {
+  const map: Record<number, number> = {};
+  for (const s of save.data.scores)
+    if (s.difficulty !== "custom" && s.seconds < (map[s.level] ?? Infinity))
+      map[s.level] = s.seconds;
+  return map;
+});
+const mmss = (s: number) =>
+  `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+function switchDifficulty(d: "casual" | "standard" | "hard") {
+  save.data.options.difficulty = d;
+  save.persist();
+  void start();
+}
+const guideAnchor = computed(() => {
+  void tick.value;
+  const e = engine.value;
+  if (!e || e.level.id > 3 || e.time >= e.messageUntil) return "";
+  if (e.message.includes("落下的阳光") || e.message.includes("阳光不足"))
+    return "sun";
+  if (e.message.includes("种射手")) return "seeds";
+  return "";
+});
+const demoId = ref(""),
+  demoEl = ref<HTMLElement>();
+let demoGame: Awaited<ReturnType<typeof mountGame>> | undefined,
+  demoTimer = 0,
+  demoCount = 0;
+const demoable = (item: PlantDef | ZombieDef) =>
+  "cost" in item &&
+  !item.upgrade &&
+  !["lily", "pot", "sea", "kelp", "coffee", "grave", "imitater"].includes(
+    item.id,
+  );
+async function openDemo(id: string) {
+  demoId.value = id;
+  await nextTick();
+  const night = isMushroom(id);
+  const e = markRaw(new Engine(night ? 11 : 1, [], (night ? 11 : 1) * 719));
+  e.addPlant(id, 2, 3);
+  demoCount = 0;
+  demoGame = await mountGame(
+    demoEl.value!,
+    e,
+    () => {
+      demoCount++;
+      if (demoCount % 31 === 0) e.spawn("basic", Math.floor(Math.random() * 5), 9);
+      if (demoCount % 13 === 0 && !e.plants.some((p) => p.id === id))
+        e.addPlant(id, 2, 3);
+    },
+    {},
+  );
+  demoTimer = window.setTimeout(closeDemo, 10000);
+}
+function closeDemo() {
+  clearTimeout(demoTimer);
+  demoGame?.destroy(true);
+  demoGame = undefined;
+  demoId.value = "";
+}
 const shopItems = [
   { id: "sun-boost", name: "应急阳光", price: 150, desc: "下一局开局阳光 +75。" },
   {
@@ -265,7 +344,7 @@ async function start() {
   playing.value = true;
   await nextTick();
   window.scrollTo(0, 0);
-  game = mountGame(
+  game = await mountGame(
     gameEl.value!,
     engine.value,
     () => {
@@ -293,6 +372,7 @@ async function start() {
         } else {
           loseTip.value =
             loseTips[Math.floor(Math.random() * loseTips.length)];
+          if (!dailyMode.value) save.recordLoss(levelId.value);
           audio.play("lose");
         }
         const fresh = checkAchievements(
@@ -453,6 +533,9 @@ watchEffect(() => {
   document.body.classList.toggle("font-small", save.data.fontSize === "small");
   document.body.classList.toggle("font-large", save.data.fontSize === "large");
 });
+watch(modal, (value) => {
+  if (!value) closeDemo();
+});
 function visibility() {
   if (document.hidden && engine.value?.status === "playing") {
     engine.value.paused = true;
@@ -479,7 +562,13 @@ function keyboard(e: KeyboardEvent) {
     tick.value++;
   }
   if (e.key === "s" || e.key === "S") selectSeed("shovel");
-  if ((e.key === "r" || e.key === "R") && engine.value) void start();
+  if ((e.key === "r" || e.key === "R") && engine.value) {
+    if (result.value || performance.now() - lastRestartKey < 3000) void start();
+    else {
+      lastRestartKey = performance.now();
+      engine.value.say("再按一次 R 重新开始本关");
+    }
+  }
   if (/^[1-9]$/.test(e.key)) {
     const ids = engine.value?.isBelt ? stats.value.belt : chosen.value;
     const id = ids[Number(e.key) - 1];
@@ -496,6 +585,7 @@ onMounted(() => {
 });
 onBeforeUnmount(() => {
   game?.destroy(true);
+  closeDemo();
   audio.dispose();
   document.removeEventListener("visibilitychange", visibility);
   document.removeEventListener("fullscreenchange", fullscreenChanged);
@@ -817,6 +907,7 @@ onBeforeUnmount(() => {
                   p.name
                 }}</strong
                 ><span class="price"><i></i>{{ p.cost }}</span
+                ><i v-if="recommended.has(p.id)" class="badge">推荐</i
                 ><b v-if="chosen.includes(p.id)">✓</b>
               </button>
             </div>
@@ -896,6 +987,13 @@ onBeforeUnmount(() => {
           </div>
         </section>
         <div class="game-frame">
+          <div
+            v-if="guideAnchor && !stats.paused && !result"
+            class="guide-bubble"
+            :class="'anchor-' + guideAnchor"
+          >
+            {{ engine?.message }}
+          </div>
           <button
             v-if="full"
             class="battle-menu-button"
@@ -1039,6 +1137,29 @@ onBeforeUnmount(() => {
                 >
                   解锁成就：{{ name }}
                 </p>
+                <div v-if="result === 'lost'" class="difficulty-switch">
+                  <span
+                    >{{
+                      (save.data.lossStreak[levelId] ?? 0) >= 2
+                        ? "这关有点难？换个难度："
+                        : "换个难度："
+                    }}</span
+                  ><button
+                    v-for="d in ['casual', 'standard', 'hard'] as const"
+                    :key="d"
+                    class="plain"
+                    :class="{
+                      active: engine?.settings.difficulty === d,
+                      recommend:
+                        (save.data.lossStreak[levelId] ?? 0) >= 2 &&
+                        d === 'casual' &&
+                        engine?.settings.difficulty !== 'casual',
+                    }"
+                    @click="switchDifficulty(d)"
+                  >
+                    {{ modeNames[d] }}
+                  </button>
+                </div>
                 <p v-if="engine?.coins" class="coin-earned">
                   本局收集金币 +{{ engine.coins }}
                 </p>
@@ -1115,7 +1236,7 @@ onBeforeUnmount(() => {
         </div>
         <p class="keyboard-hint">
           点击种子，再点击草坪种植 · 按住 Shift 连种 · 点击阳光收集 ·
-          空格暂停 · 数字键选卡 · S 键切换铲子 · R 键重开本关
+          空格暂停 · 数字键选卡 · S 键切换铲子 · 连按两次 R 重开本关
         </p>
       </template>
     </main>
@@ -1168,6 +1289,8 @@ onBeforeUnmount(() => {
               ><span v-if="save.data.stars[l.id]" class="level-stars">{{
                 "★".repeat(save.data.stars[l.id])
               }}</span
+              ><small v-if="bestTimes[l.id] !== undefined" class="level-best"
+                >最佳 {{ mmss(bestTimes[l.id]) }}</small
               ><small>{{
                 l.id > save.data.unlocked
                   ? "尚未解锁"
@@ -1239,6 +1362,16 @@ onBeforeUnmount(() => {
                 <h3>{{ item.name }}</h3>
                 <p>{{ item.desc }}</p>
                 <p v-if="tip(item)" class="tip"><b>对策</b>{{ tip(item) }}</p>
+                <p v-if="counterNames(item)" class="tip">
+                  <b>克制</b>{{ counterNames(item) }}
+                </p>
+                <button
+                  v-if="demoable(item)"
+                  class="plain demo-btn"
+                  @click="openDemo(item.id)"
+                >
+                  试玩
+                </button>
               </div>
             </article>
           </div></template
@@ -1359,6 +1492,16 @@ onBeforeUnmount(() => {
           </p></template
         >
       </section>
+    </div>
+    <div v-if="demoId" class="demo-overlay" @click.self="closeDemo">
+      <div class="demo-card">
+        <p class="demo-title">
+          试玩 · {{ plantById[demoId].name
+          }}<small>自动迎击来敌，10 秒后返回图鉴</small>
+        </p>
+        <div ref="demoEl" class="demo-mount"></div>
+        <button class="plain" @click="closeDemo">关闭</button>
+      </div>
     </div>
   </div>
 </template>

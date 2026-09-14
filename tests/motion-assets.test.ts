@@ -4,7 +4,7 @@ import { motionSheet } from "../src/game/animation";
 
 for (const [id, count] of [["basic", 16], ["cone", 16], ["bucket", 16], ["garg", 16], ["pole", 24], ["chomper", 16]] as const) {
   it(`${id} 动作图集每帧非空、边界透明，脚底对齐`, async () => {
-    const path = `public/assets/animation/${id}.png`;
+    const path = `public/assets/animation/${id}.webp`;
     const { frameWidth: w, frameHeight: h } = id === "chomper"
       ? { frameWidth: 256, frameHeight: 256 } : motionSheet(id);
     const { data, info } = await sharp(path).raw().toBuffer({ resolveWithObject: true });

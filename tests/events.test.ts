@@ -104,3 +104,21 @@ it("狂暴僵尸移动更快", () => {
   e.step(0.1);
   expect(5 - b.x).toBeCloseTo((5 - a.x) * 1.3, 5);
 });
+it("alert 展示期间 info 排队，alert 到期后依次补播", () => {
+  const e = new Engine(1, []);
+  e.say("紧急警报", "alert");
+  e.say("普通提示一");
+  e.say("普通提示二");
+  expect(e.message).toBe("紧急警报");
+  for (let i = 0; i < 41; i++) e.step(0.1);
+  expect(e.message).toBe("普通提示一");
+  for (let i = 0; i < 41; i++) e.step(0.1);
+  expect(e.message).toBe("普通提示二");
+});
+it("alert 可以顶掉 alert", () => {
+  const e = new Engine(1, []);
+  e.say("警报一", "alert");
+  e.say("警报二", "alert");
+  expect(e.message).toBe("警报二");
+  expect(e.messageTone).toBe("alert");
+});
