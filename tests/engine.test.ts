@@ -34,10 +34,10 @@ describe("基础战斗", () => {
     e.spawn("bucket", 0, 8);
     const z = e.zombies[0];
     e.damage(z, 20);
-    expect(z.armor).toBe(1080);
-    expect(z.hp).toBe(200);
+    expect(z.armor).toBe(zombieById.bucket.armor - 20);
+    expect(z.hp).toBe(zombieById.bucket.hp);
     e.damage(z, 80, true);
-    expect(z.hp).toBe(120);
+    expect(z.hp).toBe(zombieById.bucket.hp - 80);
   });
   it("同一行第一次漏怪触发割草机，第二次导致失败", () => {
     const e = new Engine(1, []);

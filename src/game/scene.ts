@@ -1,8 +1,17 @@
 import Phaser from "phaser";
-import { plants, zombies } from "./content";
+import { plants, zombies, plantById } from "./content";
 import { plantImage, zombieImage, gardenImage, effectImage } from "./art";
 import { BOARD, cellX, cellY, feetY, cellAt, healthFraction } from "./layout";
-import { bakeZombie, zombieFrame, jumpHeight } from "./animation";
+import {
+  bakeZombie,
+  zombieFrame,
+  jumpHeight,
+  sequenceZombies,
+  zombieAppearance,
+  motionSheet,
+  chomperFrame,
+} from "./animation";
+import { plantScale, zombieScale } from "./proportions";
 import type { GardenAudio } from "./audio";
 export type RenderOptions = {
   audio?: GardenAudio;
@@ -21,6 +30,7 @@ export class GardenScene extends Phaser.Scene {
   fog!: Phaser.GameObjects.Graphics;
   hover!: Phaser.GameObjects.Rectangle;
   acc = 0;
+  previous = new Map<number, { x: number; row: number }>();
   notify: () => void;
   lastNotify = 0;
   options: RenderOptions;
@@ -34,6 +44,17 @@ export class GardenScene extends Phaser.Scene {
   }
   preload() {
     this.load.image("garden", gardenImage(this.engine.level.scene));
+    for (const id of sequenceZombies)
+      this.load.spritesheet(
+        `walk-${id}`,
+        `${import.meta.env.BASE_URL}assets/animation/${id}.png`,
+        motionSheet(id),
+      );
+    this.load.spritesheet(
+      "chomper-motion",
+      `${import.meta.env.BASE_URL}assets/animation/chomper.png`,
+      { frameWidth: 256, frameHeight: 256 },
+    );
     for (const p of plants) this.load.image(p.id, plantImage(p.id));
     for (const z of zombies) this.load.image("z-" + z.id, zombieImage(z.id));
     for (let i = 0; i < 16; i++) this.load.image("fx-" + i, effectImage(i));
@@ -46,7 +67,24 @@ export class GardenScene extends Phaser.Scene {
   }
   create() {
     this.add.image(600, 345, "garden").setDisplaySize(1200, 690);
-    for (const z of zombies) bakeZombie(this, z.id);
+    for (const z of zombies)
+      if (!(sequenceZombies as readonly string[]).includes(z.id))
+        bakeZombie(this, z.id);
+    for (const id of ["cone", "bucket"]) {
+      const texture = this.textures.createCanvas("armor-" + id, 160, 80)!;
+      texture.context.drawImage(
+        this.textures.get("z-" + id).getSourceImage() as HTMLImageElement,
+        0,
+        0,
+        160,
+        id === "cone" ? 64 : 70,
+        0,
+        0,
+        160,
+        id === "cone" ? 64 : 70,
+      );
+      texture.refresh();
+    }
     const grid = this.add.graphics();
     for (let r = 0; r < this.engine.level.rows; r++)
       for (let c = 0; c < 9; c++) {
@@ -91,7 +129,15 @@ export class GardenScene extends Phaser.Scene {
       );
       this.hover.setPosition(this.x(c), this.y(r));
     });
+    this.input.mouse?.disableContextMenu();
     this.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
+      if (p.rightButtonDown()) {
+        this.engine.selected = "";
+        this.engine.cannon = 0;
+        this.hover.setVisible(false);
+        this.notify();
+        return;
+      }
       if (this.engine.paused) return;
       const token = this.engine.tokens.find(
         (t) =>
@@ -146,6 +192,9 @@ export class GardenScene extends Phaser.Scene {
     const e = this.engine;
     this.acc += Math.min(delta / 1000, 0.1);
     while (this.acc >= 1 / 60) {
+      this.previous.clear();
+      for (const z of e.zombies)
+        this.previous.set(z.uid, { x: z.x, row: z.row });
       e.step(1 / 60);
       this.acc -= 1 / 60;
     }
@@ -157,7 +206,9 @@ export class GardenScene extends Phaser.Scene {
       e.drainSounds();
     } else
       for (const sound of e.drainSounds())
-        this.options.audio?.play(sound.kind, sound.x);
+        this.options.audio?.play(sound.kind, sound.x, sound.source);
+    if (!e.paused && e.status === "playing")
+      this.options.audio?.update(e.time, e.zombies.length / 18);
     this.wasPaused = e.paused || e.status !== "playing";
     if (_time - this.lastNotify > 80) {
       this.notify();
@@ -193,28 +244,53 @@ export class GardenScene extends Phaser.Scene {
     for (const p of e.plants) {
       const key = "p" + p.uid;
       keep.add(key);
-      const base = p.layer === "base";
-      const bob = Math.sin(e.time * 2.8 + p.uid) * 2;
+      const base = p.layer === "base",
+        bodyScale = plantScale(p.id);
+      const stable =
+        base ||
+        [
+          "wallnut",
+          "tallnut",
+          "pumpkin",
+          "potato",
+          "spike",
+          "spikerock",
+          "pot",
+        ].includes(p.id);
+      const breathing = stable ? 0 : Math.sin(e.time * 2.5 + p.uid) * 0.012;
+      const attackTime = p.attackAge ?? 10;
+      const recoil =
+        attackTime < 0.32 ? Math.sin((attackTime / 0.32) * Math.PI) : 0;
+      const anticipation =
+        !p.sleep &&
+        ["shooter", "lob", "homing", "shroom"].includes(plantById[p.id].kind) &&
+        p.timer > 0 &&
+        p.timer < 0.18
+          ? Math.sin((1 - p.timer / 0.18) * Math.PI) * 0.035
+          : 0;
       const obj = this.sprite(
         key,
-        p.id,
+        p.id === "chomper" ? "chomper-motion" : p.id,
         this.x(p.col),
-        feetY(p.row, e.level.rows) - (base ? 19 : 41) + bob,
-        base ? 90 : 86,
-        base ? 45 : 86,
+        feetY(p.row, e.level.rows) - (base ? 0 : 0),
+        (base ? 90 : 86) * bodyScale,
+        (base ? 45 : 86) * bodyScale,
         p.row * 10 + (base ? 1 : p.layer === "armor" ? 4 : 3),
       );
+      if (p.id === "chomper")
+        obj
+          .setFrame(chomperFrame(p))
+          .setDisplaySize(86 * bodyScale, 86 * bodyScale);
       obj
-        .setAlpha(p.sleep ? 0.65 : 1)
-        .setAngle(base ? 0 : Math.sin(e.time * 2 + p.uid) * 1.8);
-      const attack = e.effects.find(
-        (fx) => fx.type === "shoot" && fx.x === p.col && fx.row === p.row,
+        .setOrigin(0.5, p.id === "chomper" ? 249 / 256 : 0.95)
+        .setAlpha(p.sleep ? 0.65 : 1);
+      obj.setScale(
+        obj.scaleX * (1 + breathing + anticipation - recoil * 0.065),
+        obj.scaleY * (1 - breathing - anticipation + recoil * 0.045),
       );
-      if (attack && !p.sleep)
-        obj.setScale(
-          obj.scaleX * (1 - attack.life * 0.13),
-          obj.scaleY * (1 + attack.life * 0.08),
-        );
+      obj.setAngle(
+        stable ? 0 : Math.sin(e.time * 2 + p.uid) * 0.7 - recoil * 2,
+      );
       if (
         ["cherry", "doom", "jalapeno"].includes(p.id) &&
         p.age < 1 &&
@@ -226,15 +302,16 @@ export class GardenScene extends Phaser.Scene {
           obj.scaleY * (1 + p.age * 0.12),
         );
       }
-      if (p.hp < p.max) {
+      if (p.hp < p.max || plantById[p.id].hp > 300) {
+        const barWidth = 44 * bodyScale;
         g.fillStyle(0x344638);
-        g.fillRoundedRect(this.x(p.col) - 22, this.y(p.row) + 34, 44, 4, 2);
+        g.fillRoundedRect(this.x(p.col) - barWidth / 2, this.y(p.row) + 34, barWidth, 5, 2);
         g.fillStyle(0xa7d363);
         g.fillRoundedRect(
-          this.x(p.col) - 22,
+          this.x(p.col) - barWidth / 2,
           this.y(p.row) + 34,
-          44 * Math.max(0, p.hp / p.max),
-          4,
+          barWidth * healthFraction(p.hp, p.max),
+          5,
           2,
         );
       }
@@ -257,32 +334,31 @@ export class GardenScene extends Phaser.Scene {
     for (const z of e.zombies) {
       const key = "z" + z.uid;
       keep.add(key);
-      const scale =
-        z.id === "garg"
-          ? 1.4
-          : z.id === "imp" || e.level.id === 25
-            ? 0.67
-            : ["zomboni", "catapult", "bobsled"].includes(z.id)
-              ? 1.2
-              : 1;
-      const dropped =
-        z.armor === 0 && ["bucket", "cone", "screen"].includes(z.id);
-      const texture = "anim-" + (dropped ? "basic" : z.id);
+      const scale = zombieScale(z.id, e.level.id);
+      const appearance = zombieAppearance(z);
+      const { natural, texture } = appearance;
+      const previous = this.previous.get(z.uid);
+      const blend = e.paused ? 1 : Math.min(1, this.acc * 60);
+      const renderX = previous ? previous.x + (z.x - previous.x) * blend : z.x;
+      const renderRow = z.laneChange
+        ? z.laneChange.from +
+          (z.row - z.laneChange.from) * Math.min(1, z.laneChange.elapsed / 0.6)
+        : z.row;
       const jump = jumpHeight(z),
-        foot = feetY(z.row, e.level.rows) - jump;
+        foot = feetY(renderRow, e.level.rows) - jump;
       const obj = this.sprite(
         key,
         texture,
-        this.x(z.x),
+        this.x(renderX) + (z.hurt ? Math.sin(z.hurt * 65) * 2 : 0),
         foot,
-        85 * scale,
-        106 * scale,
+        appearance.width * scale,
+        appearance.height * scale,
         5 + z.row * 10,
       );
       obj
-        .setFrame(zombieFrame(z))
-        .setDisplaySize(85 * scale, 106 * scale)
-        .setOrigin(0.5, 0.965)
+        .setFrame(zombieFrame(z, natural))
+        .setDisplaySize(appearance.width * scale, appearance.height * scale)
+        .setOrigin(0.5, appearance.origin)
         .setFlipX(z.reverse)
         .setAlpha(z.underground ? 0.25 : 1);
       obj.setTint(
@@ -297,8 +373,8 @@ export class GardenScene extends Phaser.Scene {
       if (z.flying) obj.y -= 17;
       if (!z.underground) {
         const width = 45 * scale,
-          left = this.x(z.x) - width / 2,
-          top = obj.y - 106 * scale - 7;
+          left = this.x(renderX) - width / 2,
+          top = obj.y - appearance.extent * scale - 7;
         const health = healthFraction(z.hp, z.max);
         g.fillStyle(0x1b2726, 0.85);
         g.fillRoundedRect(
@@ -368,8 +444,17 @@ export class GardenScene extends Phaser.Scene {
       ).setAngle(e.time * 300);
     }
     for (const s of e.shots) {
+      const lob = ["cabbage", "kernel", "melon", "winter"].includes(s.type);
+      const progress = Math.min(
+        1,
+        Math.abs(s.x - s.originX) /
+          Math.max(0.1, Math.abs(s.destinationX - s.originX)),
+      );
       const x = this.x(s.x),
-        y = this.y(s.row) - 14;
+        y =
+          feetY(s.row, e.level.rows) -
+          55 -
+          (lob ? Math.sin(progress * Math.PI) * 100 : 0);
       g.fillStyle(
         ["snowpea", "winter"].includes(s.type)
           ? 0xafedfa
@@ -418,6 +503,40 @@ export class GardenScene extends Phaser.Scene {
           this.lastShake = e.time;
         }
         alpha = t > 0.85 ? (1 - t) / 0.15 : 1;
+      } else if (fx.type === "smash") {
+        frame = 10;
+        size = 125;
+        alpha = 1 - t;
+        if (
+          this.options.shake?.() !== false &&
+          !e.paused &&
+          e.time - this.lastShake > 0.5 &&
+          t < 0.08
+        ) {
+          this.cameras.main.shake(120, 0.0018);
+          this.lastShake = e.time;
+        }
+      } else if (fx.type === "chomp") {
+        frame = 11;
+        size = 38;
+      } else if (fx.type === "break") {
+        if (fx.source === "cone" || fx.source === "bucket") {
+          keep.add(key);
+          this.sprite(
+            key,
+            "armor-" + fx.source,
+            x + 24 + t * 48,
+            y - 75 - 35 * Math.sin(t * Math.PI) + t * t * 55,
+            75,
+            38,
+            74,
+          )
+            .setAngle(t * 160)
+            .setAlpha(1 - t);
+          continue;
+        }
+        frame = 10;
+        size = 70;
       } else if (fx.type === "ice") {
         frame = t < 0.45 ? 8 : 9;
         size = 180;
@@ -436,9 +555,29 @@ export class GardenScene extends Phaser.Scene {
         size = 170;
       } else if (fx.type === "death" && fx.source) {
         keep.add(key);
-        this.sprite(key, "z-" + fx.source, x, y + 15, 78, 98, 65)
-          .setAngle(t * 70)
-          .setAlpha(1 - t);
+        if (fx.zombie) {
+          const z = fx.zombie,
+            appearance = zombieAppearance(z);
+          const scale = zombieScale(z.id, e.level.id);
+          this.sprite(
+            key,
+            appearance.texture,
+            x,
+            feetY(fx.row, e.level.rows) + t * 8,
+            appearance.width * scale,
+            appearance.height * scale,
+            5 + fx.row * 10,
+          )
+            .setFrame(zombieFrame(z, appearance.natural))
+            .setDisplaySize(appearance.width * scale, appearance.height * scale)
+            .setOrigin(0.5, appearance.origin)
+            .setFlipX(z.reverse)
+            .setAngle(t * 78 * (z.reverse ? -1 : 1))
+            .setAlpha(1 - t);
+        } else
+          this.sprite(key, "z-" + fx.source, x, y + 15, 78, 98, 65)
+            .setAngle(t * 70)
+            .setAlpha(1 - t);
         continue;
       } else if (fx.type === "shoot") {
         frame = 15;

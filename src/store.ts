@@ -11,6 +11,7 @@ export type Save = {
   coins: number;
   sound: boolean;
   volume: number;
+  mix: { battle: number; music: number; environment: number; ui: number };
   quality: "low" | "medium" | "high";
   shake: boolean;
   options: BattleOptions;
@@ -28,6 +29,7 @@ export const initial = (): Save => ({
   coins: 0,
   sound: true,
   volume: 0.65,
+  mix: { battle: 1, music: 0.25, environment: 0.3, ui: 0.65 },
   quality: "high",
   shake: true,
   options: defaultOptions(),
@@ -57,6 +59,15 @@ export function validateSave(data: unknown): Save {
   return {
     ...d,
     completed: complete,
+    mix: Object.fromEntries(
+      Object.entries(initial().mix).map(([key, value]) => [
+        key,
+        typeof d.mix?.[key as keyof Save["mix"]] === "number" &&
+        Number.isFinite(d.mix[key as keyof Save["mix"]])
+          ? Math.max(0, Math.min(1, d.mix[key as keyof Save["mix"]]))
+          : value,
+      ]),
+    ) as Save["mix"],
     volume:
       typeof d.volume === "number" && Number.isFinite(d.volume)
         ? Math.max(0, Math.min(1, d.volume))

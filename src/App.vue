@@ -4,6 +4,7 @@ import {
   computed,
   onMounted,
   onBeforeUnmount,
+  watch,
   nextTick,
   markRaw,
 } from "vue";
@@ -52,6 +53,7 @@ const modeNames = {
 };
 function updateSettings() {
   audio.volume = save.data.volume;
+  audio.mix = { ...save.data.mix };
   save.persist();
 }
 function sampleSound() {
@@ -82,6 +84,7 @@ const stats = computed(() => {
 const pa = plantImage,
   za = zombieImage;
 function chooseLevel(id: number) {
+  void exitBattleFullscreen();
   audio.stop();
   game?.destroy(true);
   game = undefined;
@@ -205,6 +208,7 @@ async function start() {
   );
 }
 function home() {
+  void exitBattleFullscreen();
   audio.stop();
   game?.destroy(true);
   game = undefined;
@@ -248,6 +252,7 @@ async function importSave(event: Event) {
     save.importSave(await f.text());
     audio.enabled = save.data.sound;
     audio.volume = save.data.volume;
+    audio.mix = { ...save.data.mix };
     levelId.value = Math.min(50, save.data.unlocked);
   } catch (error) {
     save.warning = (error as Error).message;
@@ -260,15 +265,47 @@ function sound() {
   save.persist();
   audio.play("click");
 }
-async function fullscreen() {
-  if (!document.fullscreenElement) {
-    await document.documentElement.requestFullscreen?.();
-    full.value = true;
-  } else {
-    await document.exitFullscreen();
-    full.value = false;
+async function exitBattleFullscreen() {
+  full.value = false;
+  if (document.fullscreenElement)
+    await document.exitFullscreen().catch(() => {});
+  try {
+    screen.orientation?.unlock();
+  } catch {
+    /* Optional browser API. */
   }
 }
+async function fullscreen() {
+  if (full.value) {
+    await exitBattleFullscreen();
+    return;
+  }
+  full.value = true;
+  await nextTick();
+  try {
+    await document.documentElement.requestFullscreen?.();
+  } catch {
+    /* Keep immersive layout when native fullscreen is unavailable. */
+  }
+  try {
+    await (
+      screen.orientation as ScreenOrientation & {
+        lock?: (orientation: string) => Promise<void>;
+      }
+    ).lock?.("landscape");
+  } catch {
+    /* Manual landscape remains supported. */
+  }
+  window.dispatchEvent(new Event("resize"));
+}
+function fullscreenChanged() {
+  if (!document.fullscreenElement) full.value = false;
+  window.dispatchEvent(new Event("resize"));
+}
+watch(full, (value) => {
+  document.body.classList.toggle("battle-fullscreen", value);
+  void nextTick().then(() => window.dispatchEvent(new Event("resize")));
+});
 function visibility() {
   if (document.hidden && engine.value?.status === "playing") {
     engine.value.paused = true;
@@ -287,7 +324,11 @@ function keyboard(e: KeyboardEvent) {
     pause();
   }
   if (e.code === "Escape") {
-    if (engine.value) engine.value.selected = "";
+    if (engine.value) {
+      engine.value.selected = "";
+      engine.value.cannon = 0;
+    }
+    if (full.value && !document.fullscreenElement) void exitBattleFullscreen();
     tick.value++;
   }
   if (e.key === "s" || e.key === "S") selectSeed("shovel");
@@ -300,19 +341,23 @@ function keyboard(e: KeyboardEvent) {
 onMounted(() => {
   audio.enabled = save.data.sound;
   audio.volume = save.data.volume;
+  audio.mix = { ...save.data.mix };
   document.addEventListener("visibilitychange", visibility);
+  document.addEventListener("fullscreenchange", fullscreenChanged);
   window.addEventListener("keydown", keyboard);
 });
 onBeforeUnmount(() => {
   game?.destroy(true);
   audio.dispose();
   document.removeEventListener("visibilitychange", visibility);
+  document.removeEventListener("fullscreenchange", fullscreenChanged);
+  document.body.classList.remove("battle-fullscreen");
   window.removeEventListener("keydown", keyboard);
 });
 </script>
 
 <template>
-  <div class="app-shell">
+  <div class="app-shell" :class="{ immersive: full && page === 'game' }">
     <header class="topbar">
       <button class="brand" @click="page === 'game' ? pause() : home()">
         <span class="brand-mark"><img :src="pa('pea')" alt="" /></span
@@ -658,6 +703,14 @@ onBeforeUnmount(() => {
           </div>
         </section>
         <div class="game-frame">
+          <button
+            v-if="full"
+            class="battle-menu-button"
+            aria-label="战斗菜单"
+            @click="pause"
+          >
+            ☰
+          </button>
           <div class="seed-tray">
             <div class="sun-counter">
               <span class="sun-icon"></span
@@ -678,6 +731,7 @@ onBeforeUnmount(() => {
                 }"
                 @click="selectSeed(id)"
                 :aria-label="'选择' + plantById[id].name"
+                :aria-pressed="stats.selected === id"
               >
                 <span class="key">{{ i + 1 }}</span
                 ><img :src="pa(id)" :alt="plantById[id].name" /><span>{{
@@ -720,6 +774,12 @@ onBeforeUnmount(() => {
                 <span class="kicker">TAKE A LITTLE BREAK</span>
                 <h2>庭院，等你回来。</h2>
                 <p>植物和僵尸都暂停了，放心休息一下。</p>
+                <button v-if="full" class="plain" @click="sound">
+                  {{ save.data.sound ? "关闭声音" : "打开声音" }}
+                </button>
+                <button v-if="full" class="plain" @click="exitBattleFullscreen">
+                  退出全屏
+                </button>
                 <button class="primary" @click="pause">继续守护 →</button
                 ><button class="plain" @click="start">重新开始本关</button
                 ><button class="text-button" @click="home">返回主菜单</button>
@@ -904,12 +964,12 @@ onBeforeUnmount(() => {
               />
               <div>
                 <small v-if="'cost' in item"
-                  >{{ item.cost }} 阳光 ·
+                  >{{ item.cost }} 阳光 · 生命 {{ item.hp }} ·
                   {{
                     item.unlock > save.data.unlocked ? "尚未解锁" : "已解锁"
                   }}</small
                 ><small v-else
-                  >生命 {{ item.hp }} · 护甲 {{ item.armor }}</small
+                  >生命 {{ item.hp }} · 护甲 {{ item.armor }} · 移速 {{ item.speed }}</small
                 >
                 <h3>{{ item.name }}</h3>
                 <p>{{ item.desc }}</p>
@@ -937,6 +997,27 @@ onBeforeUnmount(() => {
               v-model.number="save.data.volume"
               @input="updateSettings"
             /><button class="plain" @click="sampleSound">试听</button>
+          </div>
+          <div
+            class="setting-row"
+            v-for="(label, channel) in {
+              battle: '战斗音效',
+              music: '背景音乐',
+              environment: '环境声音',
+              ui: '界面提示',
+            }"
+            :key="channel"
+          >
+            <span>{{ label }}</span
+            ><input
+              type="range"
+              min="0"
+              max="1"
+              step="0.05"
+              :aria-label="label"
+              v-model.number="save.data.mix[channel]"
+              @input="updateSettings"
+            />
           </div>
           <div class="setting-row">
             <span>特效质量</span

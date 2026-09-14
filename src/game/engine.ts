@@ -25,7 +25,9 @@ export type Plant = {
   sleep: boolean;
   ready: boolean;
   layer: "base" | "main" | "armor";
+  attackAge?: number;
   ladder?: boolean;
+  chomp?: { target: number; elapsed: number; hit: boolean };
 };
 export type Zombie = {
   uid: number;
@@ -47,6 +49,18 @@ export type Zombie = {
   thrown: boolean;
   maxArmor: number;
   motion: number;
+  hurt?: number;
+  swallowed?: boolean;
+  special?: {
+    kind: "smash" | "throw";
+    elapsed: number;
+    duration: number;
+    hit: boolean;
+    target?: number;
+    opponent?: boolean;
+  };
+  laneChange?: { from: number; elapsed: number };
+  actionTime?: number;
   action: "walk" | "eat" | "jump" | "special";
   jump?: { from: number; to: number; elapsed: number; duration: number };
 };
@@ -55,6 +69,9 @@ export type Shot = {
   x: number;
   row: number;
   target: number;
+  direction: number;
+  originX: number;
+  destinationX: number;
   damage: number;
   speed: number;
   type: string;
@@ -76,6 +93,7 @@ export type Effect = {
   life: number;
   duration: number;
   source?: string;
+  zombie?: Zombie;
 };
 export type Tile = {
   row: number;
@@ -215,6 +233,9 @@ export class Engine {
               ? 0.7
               : 0.45;
     const sound: Partial<Record<string, SoundKind>> = {
+      smash: "smash",
+      chomp: "chomp",
+      land: "land",
       boom: "explosion",
       ice: "freeze",
       bite: "bite",
@@ -477,6 +498,8 @@ export class Engine {
   }
   damage(z: Zombie, amount: number, pierce = false) {
     if (z.hp <= 0) return;
+    z.hurt = 0.16;
+    const oldArmor = z.armor;
     this.sound(z.armor > 0 && !pierce ? "metal" : "hit", z.x, z.id);
     let rest = amount;
     if (z.armor > 0 && !pierce) {
@@ -485,6 +508,10 @@ export class Engine {
       rest -= used;
     }
     z.hp -= rest;
+    if (oldArmor > 0 && z.armor === 0) {
+      this.effect(z.x, z.row, "break", z.id);
+      this.sound("break", z.x, z.id);
+    }
     this.effect(z.x, z.row, "hit");
   }
   blast(
@@ -543,8 +570,7 @@ export class Engine {
       this.say("点击目标区域发射玉米炮");
       return;
     }
-    if (this.selected && this.plant(this.selected, row, col) && this.isBelt)
-      this.selected = "";
+    if (this.selected) this.plant(this.selected, row, col);
   }
   hitZombie(uid: number) {
     if (this.level.mode !== "whack" || this.paused || this.status !== "playing")
@@ -553,11 +579,16 @@ export class Engine {
     if (z) this.damage(z, 200, true);
   }
   shoot(p: Plant, z: Zombie, damage: number, type = p.id) {
+    const original = this.plants.find((q) => q.uid === p.uid);
+    if (original) original.attackAge = 0;
     this.shots.push({
       uid: this.uid++,
       x: p.col + 0.35,
       row: p.row,
       target: z.uid,
+      direction: z.x >= p.col ? 1 : -1,
+      originX: p.col + 0.35,
+      destinationX: z.x,
       damage,
       speed: ["lob", "homing"].includes(plantById[p.id].kind) ? 4 : 6,
       type,
@@ -578,6 +609,8 @@ export class Engine {
     if (this.paused || this.status !== "playing") return;
     dt = Math.min(dt, 0.1);
     this.time += dt;
+    for (const p of this.plants)
+      if (p.attackAge !== undefined) p.attackAge += dt;
     this.fogClear = Math.max(0, this.fogClear - dt);
     this.bossDown = Math.max(0, this.bossDown - dt);
     for (const id in this.cooldowns)
@@ -710,16 +743,43 @@ export class Engine {
           this.remove(p);
         }
       }
+      if (d.kind === "chomp") {
+        if (!p.chomp && p.timer <= 0 && ahead.some((z) => z.x < p.col + 1))
+          p.chomp = { target: ahead[0].uid, elapsed: 0, hit: false };
+        if (p.chomp) {
+          const bite = p.chomp;
+          bite.elapsed += dt;
+          if (!bite.hit && bite.elapsed >= 0.3) {
+            bite.hit = true;
+            const victim = this.zombies.find(
+              (z) =>
+                z.uid === bite.target &&
+                z.hp > 0 &&
+                !z.ally &&
+                !z.flying &&
+                !z.underground &&
+                z.row === p.row &&
+                z.x > p.col - 0.3 &&
+                z.x < p.col + 1.1,
+            );
+            if (victim) {
+              this.damage(victim, 1800, true);
+              if (victim.hp <= 0) victim.swallowed = true;
+              p.timer = 35;
+              this.effect(p.col + 0.4, p.row, "chomp", p.id);
+            } else p.timer = 0.6;
+          }
+          if (bite.elapsed >= 0.6) p.chomp = undefined;
+        }
+      }
       if (
-        ["squash", "kelp", "chomp"].includes(d.kind) &&
+        ["squash", "kelp"].includes(d.kind) &&
         p.timer <= 0 &&
         ahead.some((z) => z.x < p.col + 1)
       ) {
-        const z = ahead[0];
-        this.damage(z, 1800, true);
+        this.damage(ahead[0], 1800, true);
         this.effect(p.col, p.row, "boom");
-        if (d.kind === "chomp") p.timer = 35;
-        else this.remove(p);
+        this.remove(p);
       }
       if (d.kind === "spike" && p.timer <= 0) {
         for (const z of targets)
@@ -846,19 +906,39 @@ export class Engine {
       }
     }
     for (const s of this.shots) {
-      const z = this.zombies.find((z) => z.uid === s.target && z.hp > 0);
-      if (!z) {
+      const homing = s.type === "cattail";
+      const lob = ["cabbage", "kernel", "melon", "winter"].includes(s.type);
+      let target = this.zombies.find(
+        (z) => z.uid === s.target && z.hp > 0 && !z.ally,
+      );
+      if (homing && !target)
+        target = this.zombies.find(
+          (z) => z.hp > 0 && !z.ally && !z.underground,
+        );
+      if (homing && target) {
+        s.target = target.uid;
+        s.direction = target.x >= s.x ? 1 : -1;
+      }
+      const previous = s.x;
+      s.x += s.direction * s.speed * dt;
+      if ((homing || lob || s.type === "star") && target)
+        s.row += (target.row - s.row) * Math.min(1, dt * 9);
+      if (s.x < -1 || s.x > 11) {
         s.hit = true;
         continue;
       }
-      const direction = z.x >= s.x ? 1 : -1;
-      s.x += direction * s.speed * dt;
-      if (
-        ["cattail", "star", "cabbage", "kernel", "melon", "winter"].includes(
-          s.type,
+      const z = this.zombies
+        .filter(
+          (z) =>
+            z.hp > 0 &&
+            !z.ally &&
+            !z.underground &&
+            (!z.flying || ["cactus", "cattail"].includes(s.type)) &&
+            Math.abs(z.row - s.row) < 0.35 &&
+            z.x >= Math.min(previous, s.x) - 0.18 &&
+            z.x <= Math.max(previous, s.x) + 0.18,
         )
-      )
-        s.row += (z.row - s.row) * Math.min(1, dt * 9);
+        .sort((a, b) => Math.abs(a.x - previous) - Math.abs(b.x - previous))[0];
       const torch = this.plants.find(
         (p) =>
           p.id === "torch" && p.row === s.row && Math.abs(p.col - s.x) < 0.15,
@@ -870,7 +950,7 @@ export class Engine {
         s.damage *= 2;
         s.type = "fire";
       }
-      if (Math.abs(s.x - z.x) < 0.18) {
+      if (z) {
         s.hit = true;
         this.damage(
           z,
@@ -925,7 +1005,10 @@ export class Engine {
     const dead = this.zombies.filter((z) => z.hp <= 0);
     this.kills += dead.filter((z) => !z.ally).length;
     for (const z of dead) {
-      this.effect(z.x, z.row, "death", z.id);
+      if (!z.swallowed) {
+        this.effect(z.x, z.row, "death", z.id);
+        this.effects.at(-1)!.zombie = { ...z };
+      }
       if (this.random() < 0.1) this.token(z.x, z.row, 10, true);
     }
     this.zombies = this.zombies.filter((z) => z.hp > 0 && z.x > -2 && z.x < 12);
@@ -945,13 +1028,27 @@ export class Engine {
     }
   }
   updateZombie(z: Zombie, dt: number) {
+    const previous = z.action,
+      frozen = z.freeze > 0;
+    this.advanceZombie(z, dt);
+    if (z.action !== previous) z.actionTime = 0;
+    else if (!frozen) z.actionTime = (z.actionTime ?? 0) + dt;
+  }
+  private advanceZombie(z: Zombie, dt: number) {
     if (z.hp <= 0) return;
     const d = zombieById[z.id];
+    z.slow = Math.max(0, z.slow - dt);
+    if (z.freeze > 0) {
+      z.freeze = Math.max(0, z.freeze - dt);
+      return;
+    }
+    z.hurt = Math.max(0, (z.hurt || 0) - dt);
+    if (z.laneChange) {
+      z.laneChange.elapsed += dt;
+      if (z.laneChange.elapsed >= 0.6) z.laneChange = undefined;
+    }
     z.age += dt;
     z.timer -= dt;
-    z.slow = Math.max(0, z.slow - dt);
-    z.freeze = Math.max(0, z.freeze - dt);
-    if (z.freeze > 0) return;
     z.action = "walk";
     if (z.jump) {
       z.action = "jump";
@@ -962,6 +1059,55 @@ export class Engine {
         z.jump = undefined;
         z.action = "walk";
         this.effect(z.x, z.row, "land");
+      }
+      return;
+    }
+    if (z.special) {
+      z.action = "special";
+      const action = z.special;
+      action.elapsed = Math.min(action.duration, action.elapsed + dt);
+      if (!action.hit && action.elapsed >= action.duration * 0.5) {
+        action.hit = true;
+        if (action.kind === "throw") {
+          this.spawn("imp", z.row, z.x);
+          const imp = this.zombies.at(-1)!;
+          imp.ally = z.ally;
+          imp.reverse = z.reverse;
+          imp.jump = {
+            from: z.x,
+            to: Math.max(0, Math.min(9.5, z.x + (z.reverse ? 4 : -4))),
+            elapsed: 0,
+            duration: 1.1,
+          };
+          imp.action = "jump";
+          this.effect(z.x, z.row, "jump", "garg");
+        } else {
+          if (action.opponent) {
+            const victim = this.zombies.find(
+              (q) =>
+                q.uid === action.target &&
+                q.hp > 0 &&
+                q.ally !== z.ally &&
+                q.row === z.row &&
+                Math.abs(q.x - z.x) < 0.7,
+            );
+            if (victim) this.damage(victim, 9999);
+          } else {
+            const victim = this.plants.find(
+              (p) =>
+                p.uid === action.target &&
+                p.hp > 0 &&
+                p.row === z.row &&
+                Math.abs(p.col - z.x) < 0.7,
+            );
+            if (victim) victim.hp = 0;
+          }
+          this.effect(z.x - 0.35, z.row, "smash", "garg");
+        }
+      }
+      if (action.elapsed >= action.duration) {
+        z.special = undefined;
+        z.action = "walk";
       }
       return;
     }
@@ -989,9 +1135,11 @@ export class Engine {
         if (row >= 0 && row < this.level.rows) this.spawn("backup", row, z.x);
       z.timer = 18;
     }
-    if (["garg"].includes(z.id) && z.hp < z.max / 2 && !z.thrown) {
-      this.spawn("imp", z.row, Math.max(0, z.x - 4));
+    if (z.id === "garg" && z.hp < z.max / 2 && !z.thrown) {
       z.thrown = true;
+      z.special = { kind: "throw", elapsed: 0, duration: 0.9, hit: false };
+      z.action = "special";
+      return;
     }
     if (z.id === "catapult" && z.x > 7 && z.age < 30) {
       z.action = "special";
@@ -1013,17 +1161,38 @@ export class Engine {
       z.freeze = 2;
     }
     if (z.id === "yeti" && z.age > 15) z.reverse = true;
-    if (z.ally) {
-      const target = this.zombies.find(
-        (q) => !q.ally && q.row === z.row && Math.abs(q.x - z.x) < 0.5,
-      );
-      if (target) {
+    const opponent = this.zombies.find(
+      (q) =>
+        q.hp > 0 &&
+        q.ally !== z.ally &&
+        q.row === z.row &&
+        !q.flying &&
+        !q.underground &&
+        Math.abs(q.x - z.x) < 0.5,
+    );
+    if (opponent && !z.flying && !z.underground) {
+      if (z.id === "garg") {
         if (z.timer <= 0) {
-          this.damage(target, 100);
-          z.timer = 1;
-        }
+          z.special = {
+            kind: "smash",
+            elapsed: 0,
+            duration: 0.8,
+            hit: false,
+            target: opponent.uid,
+            opponent: true,
+          };
+          z.timer = 2;
+          z.action = "special";
+        } else z.action = "eat";
         return;
       }
+      z.action = "eat";
+      if (z.timer <= 0) {
+        this.damage(opponent, 100);
+        z.timer = 1;
+        this.effect(z.x, z.row, "bite", z.id);
+      }
+      return;
     }
     const target = this.plants
       .filter(
@@ -1038,6 +1207,20 @@ export class Engine {
           { armor: 0, main: 1, base: 2 }[b.layer],
       )[0];
     if (target && !z.flying && !z.underground && !z.ally) {
+      if (z.id === "garg") {
+        if (z.timer <= 0) {
+          z.special = {
+            kind: "smash",
+            elapsed: 0,
+            duration: 0.8,
+            hit: false,
+            target: target.uid,
+          };
+          z.timer = 2;
+          z.action = "special";
+        } else z.action = "eat";
+        return;
+      }
       if (
         target.ladder ||
         (z.id === "ladder" &&
@@ -1076,8 +1259,10 @@ export class Engine {
           const choices = [z.row - 1, z.row + 1].filter(
             (r) => r >= 0 && r < this.level.rows && !this.water(r),
           );
-          if (choices.length)
+          if (choices.length) {
+            z.laneChange = { from: z.row, elapsed: 0 };
             z.row = choices[Math.floor(this.random() * choices.length)];
+          }
         }
         target.hp -= ["garg", "zomboni", "catapult"].includes(z.id)
           ? 9999
@@ -1092,7 +1277,22 @@ export class Engine {
     if (z.jumped && ["pole", "dolphin"].includes(z.id)) speed *= 0.5;
     if (z.slow > 0) speed *= 0.5;
     z.x += speed * dt * (z.reverse ? 1 : -1);
+    const lastStep = Math.floor(z.motion / 12);
     z.motion += speed * dt * 96;
+    if (
+      Math.floor(z.motion / 12) !== lastStep &&
+      !z.flying &&
+      !z.underground &&
+      ![
+        "zomboni",
+        "bobsled",
+        "catapult",
+        "ducky",
+        "snorkel",
+        "dolphin",
+      ].includes(z.id)
+    )
+      this.sound("step", z.x, z.id);
     if (z.id === "zomboni" && z.x < 9) {
       const col = Math.round(z.x);
       if (!this.tiles.some((t) => t.row === z.row && t.col === col))

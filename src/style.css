@@ -1831,3 +1831,269 @@ input[type="range"] {
     width: min(100%, calc((100dvh - 88px) * 1.73913 + 72px));
   }
 }
+
+/* Immersive battle keeps all page chrome outside the playing surface. */
+body.battle-fullscreen {
+  overflow: hidden;
+  overscroll-behavior: none;
+  background: #182419;
+}
+.app-shell.immersive {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right)
+    env(safe-area-inset-bottom) env(safe-area-inset-left);
+  background: #182419;
+  z-index: 100;
+  overflow: hidden;
+}
+.app-shell.immersive > .topbar,
+.app-shell.immersive > footer,
+.immersive .game-heading,
+.immersive .keyboard-hint,
+.immersive .wave-details {
+  display: none !important;
+}
+.immersive main {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  place-items: center;
+}
+.immersive .game-frame {
+  position: relative;
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) 24px;
+  width: min(
+    100%,
+    calc(
+      (100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom)) *
+        1.73913 + 88px
+    )
+  );
+  max-width: none;
+  max-height: 100%;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  overflow: visible;
+}
+.immersive .canvas-wrap {
+  grid-column: 2;
+  grid-row: 1;
+  width: 100%;
+  aspect-ratio: 1200/690;
+  margin: 0;
+  touch-action: none;
+}
+.immersive .seed-tray {
+  grid-column: 1;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  width: 88px;
+  height: 100%;
+  min-height: 0;
+  gap: 4px;
+  padding: 8px 5px 40px;
+  border-radius: 0;
+  overflow: hidden;
+}
+.immersive .sun-counter {
+  width: 100%;
+  min-width: 0;
+  height: 45px;
+  flex: 0 0 45px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 0;
+}
+.immersive .sun-counter strong {
+  font-size: 17px;
+}
+.immersive .sun-counter small {
+  display: none;
+}
+.immersive .sun-icon {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+}
+.immersive .battle-seeds {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  flex: 1;
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  overflow-y: auto;
+  gap: 4px;
+  padding: 0;
+  scrollbar-width: thin;
+  touch-action: pan-y;
+}
+.immersive .battle-seed {
+  flex: 0 0 61px;
+  width: 100%;
+  min-width: 0;
+  height: 61px;
+  padding: 2px;
+}
+.immersive .battle-seed img {
+  width: 40px;
+  height: 35px;
+}
+.immersive .battle-seed > span:not(.key) {
+  font-size: 8px;
+}
+.immersive .battle-seed strong {
+  font-size: 10px;
+}
+.immersive .battle-seed .key {
+  display: none;
+}
+.immersive .shovel {
+  flex: 0 0 35px;
+  width: 100%;
+  height: 35px;
+  margin: 0;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+.immersive .shovel .shovel-icon {
+  font-size: 23px !important;
+  line-height: 25px !important;
+}
+.immersive .shovel span {
+  font-size: 9px;
+}
+.immersive .game-status {
+  grid-column: 1/-1;
+  grid-row: 2;
+  height: 24px;
+  padding: 0 8px;
+  font-size: 9px;
+}
+.immersive .game-status .progress {
+  max-width: 220px;
+}
+.battle-menu-button {
+  position: absolute;
+  left: 22px;
+  bottom: 29px;
+  z-index: 15;
+  width: 44px;
+  height: 32px;
+  border-radius: 6px;
+  background: #e8e9cd;
+  color: #304b35;
+  font-size: 20px;
+  line-height: 1;
+}
+.immersive .game-message {
+  font-size: 12px;
+  max-width: 85%;
+  padding: 8px 12px;
+}
+.immersive .pause-card {
+  max-height: 95%;
+  overflow: auto;
+  padding: 16px 22px;
+  width: min(360px, 90%);
+}
+.immersive .pause-card .kicker,
+.immersive .pause-card p {
+  display: none;
+}
+.immersive .pause-card h2 {
+  font-size: 20px;
+  margin: 8px 0 12px;
+}
+.immersive .pause-card button {
+  padding: 8px 12px;
+  margin-top: 5px;
+}
+@media (orientation: portrait) {
+  .immersive .game-frame {
+    grid-template-columns: 1fr;
+    grid-template-rows: 76px auto 24px;
+    width: 100%;
+  }
+  .immersive .seed-tray {
+    grid-column: 1;
+    grid-row: 1;
+    flex-direction: row;
+    width: 100%;
+    height: 76px;
+    padding: 4px 48px 4px 4px;
+  }
+  .immersive .sun-counter {
+    width: 48px;
+    flex: 0 0 48px;
+    height: 100%;
+  }
+  .immersive .battle-seeds {
+    flex-direction: row;
+    height: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    touch-action: pan-x;
+  }
+  .immersive .battle-seed {
+    flex: 0 0 58px;
+    width: 58px;
+    height: 66px;
+  }
+  .immersive .shovel {
+    flex: 0 0 35px;
+    width: 35px;
+    height: 100%;
+    flex-direction: column;
+  }
+  .immersive .canvas-wrap {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  .immersive .game-status {
+    grid-row: 3;
+  }
+  .battle-menu-button {
+    left: auto;
+    right: 3px;
+    top: 21px;
+    bottom: auto;
+    width: 42px;
+  }
+}
+.immersive .battle-seed {
+  display: grid;
+  grid-template-rows: 34px 10px 12px;
+  justify-items: center;
+  align-items: center;
+  line-height: 1;
+  gap: 1px;
+  flex-basis: 64px;
+  height: 64px;
+}
+.immersive .battle-seed img {
+  height: 34px;
+  object-fit: contain;
+}
+.immersive .battle-seed strong,
+.immersive .battle-seed > span:not(.key) {
+  line-height: 1;
+  margin: 0;
+}

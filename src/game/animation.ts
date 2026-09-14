@@ -1,11 +1,77 @@
 import type Phaser from "phaser";
-import type { Zombie } from "./engine";
+import type { Zombie, Plant } from "./engine";
 const vehicles = new Set(["zomboni", "bobsled", "catapult", "boss"]);
 const floats = new Set(["ducky", "snorkel", "dolphin", "balloon", "bungee"]);
-export function zombieFrame(z: Zombie) {
+export const sequenceZombies = [
+  "basic",
+  "cone",
+  "bucket",
+  "garg",
+  "pole",
+] as const;
+export const motionSheet = (id: string) =>
+  ["garg", "pole"].includes(id)
+    ? { frameWidth: 320, frameHeight: 320 }
+    : { frameWidth: 192, frameHeight: 256 };
+export function chomperFrame(p: Plant) {
+  if (p.chomp) return 4 + Math.min(3, Math.floor((p.chomp.elapsed / 0.6) * 4));
+  if (p.timer > 0.6) return 8 + (Math.floor(p.age * 6) % 4);
+  if (p.timer > 0)
+    return 12 + Math.min(3, Math.floor(((0.6 - p.timer) / 0.6) * 4));
+  return Math.floor(p.age * 4) % 4;
+}
+export function zombieAppearance(z: Zombie) {
+  const id =
+    z.armor === 0 && ["cone", "bucket", "screen"].includes(z.id)
+      ? "basic"
+      : z.id;
+  const natural = (sequenceZombies as readonly string[]).includes(id);
+  if (id === "garg" || id === "pole")
+    return {
+      id,
+      natural,
+      texture: "walk-" + id,
+      width: 160,
+      height: 160,
+      origin: 313 / 320,
+      extent: id === "garg" ? 96 : 118,
+    };
+  return {
+    id,
+    natural,
+    texture: (natural ? "walk-" : "anim-") + id,
+    width: natural ? 96 : 85,
+    height: natural ? 128 : 106,
+    origin: natural ? 249 / 256 : 0.965,
+    extent: natural ? (id === "cone" ? 112 : id === "bucket" ? 101 : 88) : 106,
+  };
+}
+export function zombieFrame(z: Zombie, natural = zombieAppearance(z).natural) {
+  if (z.id === "garg") {
+    if (z.special) {
+      const phase = Math.min(3, Math.floor((z.special.elapsed / z.special.duration) * 4));
+      // The source's third throw pose includes a detached imp. Use the empty-hand
+      // follow-through once the engine spawns the independently animated imp.
+      return z.special.kind === "throw" ? [12, 13, 15, 15][phase] : 8 + phase;
+    }
+    return z.action === "eat" ? 0 : Math.floor(z.motion / 2.6) % 8;
+  }
+  if (z.id === "pole") {
+    if (z.jump)
+      return (
+        8 + Math.min(3, Math.floor((z.jump.elapsed / z.jump.duration) * 4))
+      );
+    if (z.action === "eat")
+      return 20 + (Math.floor((z.actionTime ?? z.age) * 6) % 4);
+    return (z.jumped ? 12 : 0) + (Math.floor(z.motion / 2.6) % 8);
+  }
+  if (natural)
+    return z.action === "eat"
+      ? 12 + (Math.floor((z.actionTime ?? z.age) * 8) % 4)
+      : Math.floor(z.motion / 2) % 12;
   return z.action === "eat"
-    ? 8 + (Math.floor(z.age * 6) % 4)
-    : Math.floor(z.motion / 3.8) % 8;
+    ? 8 + (Math.floor((z.actionTime ?? z.age) * 6) % 4)
+    : Math.floor(z.motion / 2.6) % 8;
 }
 export function jumpHeight(z: Zombie) {
   return z.jump
