@@ -1,3 +1,4 @@
+import { presentationAssets, presentationImage, projectileVisual, projectileHidden, plantAccent, plantBodyPose, zombieAccent, zombieVisualPose } from "./presentation";
 import Phaser from "phaser";
 import { plants, zombies, plantById } from "./content";
 import { plantImage, zombieImage, gardenImage, effectImage } from "./art";
@@ -57,6 +58,7 @@ export class GardenScene extends Phaser.Scene {
   }
   preload() {
     this.load.image("garden", gardenImage(this.engine.level.scene));
+    for (const id of presentationAssets) this.load.image("art-" + id, presentationImage(id));
     for (const id of sequenceZombies)
       this.load.spritesheet(
         `walk-${id}`,
@@ -118,8 +120,17 @@ export class GardenScene extends Phaser.Scene {
     this.graphics = this.add.graphics().setDepth(80);
     this.terrain = this.add.graphics().setVisible(false);
     this.fog = this.add.graphics().setVisible(false);
-    this.terrainCache = this.add.renderTexture(0, 0, 1200, 690).setDepth(79);
-    this.fogCache = this.add.renderTexture(0, 0, 1200, 690).setDepth(100);
+    // RenderTexture 继承 Image，默认原点是 (0.5, 0.5)；不改成左上角的话
+    // 整张贴图会往左上偏移半张，墓碑、罐子、冰道和迷雾都会画到屏幕外。
+    this.terrainCache = this.add
+      .renderTexture(0, 0, 1200, 690)
+      .setOrigin(0, 0)
+      // 地块是地面装饰（墓碑、罐子、冰道、弹坑），要压在植物和僵尸下面。
+      .setDepth(0.5);
+    this.fogCache = this.add
+      .renderTexture(0, 0, 1200, 690)
+      .setOrigin(0, 0)
+      .setDepth(100);
     this.hover = this.add
       .rectangle(
         0,
@@ -132,9 +143,10 @@ export class GardenScene extends Phaser.Scene {
       .setStrokeStyle(2, 0xfff1b0, 0.8)
       .setVisible(false)
       .setDepth(101);
+    // 拖动预览：单一本体 + 有效/无效染色，避免光晕造成重影。
     this.ghost = this.add
       .image(0, 0, "pea")
-      .setAlpha(0.5)
+      .setAlpha(0.82)
       .setOrigin(0.5, 0.95)
       .setDisplaySize(86, 86)
       .setVisible(false)
@@ -147,14 +159,25 @@ export class GardenScene extends Phaser.Scene {
       this.hover.setVisible(inLawn && !!id);
       this.hover.setPosition(this.x(c), this.y(r));
       if (inLawn && id && id !== "shovel" && plantById[id]) {
+        const ok = this.engine.canPlant(id, r, c);
+        // 预览尺寸与实际种植后的占比一致（食人花、高坚果等会更大）。
+        const size = 86 * plantScale(id);
         this.ghost
           .setTexture(id === "chomper" ? "chomper-motion" : id)
+          .setFrame(id === "chomper" ? 0 : "__BASE")
+          .setDisplaySize(size, size)
           .setPosition(this.x(c), feetY(r, this.engine.level.rows))
           .setVisible(true);
-        if (id === "chomper") this.ghost.setFrame(0);
-        if (this.engine.canPlant(id, r, c)) this.ghost.clearTint();
+        if (!ok) this.ghost.clearTint();
         else this.ghost.setTint(0xe05545);
-      } else this.ghost.setVisible(false);
+      } else {
+        this.ghost.setVisible(false);
+      }
+    });
+    // 指针离开画布时收掉预览，避免残影停在草坪边缘。
+    this.input.on("gameout", () => {
+      this.ghost.setVisible(false);
+      this.hover.setVisible(false);
     });
     this.input.mouse?.disableContextMenu();
     this.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
@@ -190,6 +213,20 @@ export class GardenScene extends Phaser.Scene {
       }
       const { row, col } = cellAt(p.x, p.y, this.engine.level.rows);
       this.engine.click(row, col, (p.event as MouseEvent).shiftKey);
+    });
+    // 从顶部卡片直接拖到草坪：抬手时在落点种植（点选种植在 pointerdown 已处理）。
+    this.input.on("pointerup", (p: Phaser.Input.Pointer) => {
+      // 按下发生在画布内说明是普通点选，pointerdown 已经种过了。
+      if (p.downElement === this.game.canvas) return;
+      const id = this.engine.selected;
+      if (!id || id === "shovel" || !plantById[id]) return;
+      if (this.engine.paused || this.engine.status !== "playing") return;
+      const { row, col } = cellAt(p.x, p.y, this.engine.level.rows);
+      if (col < 0 || col > 8 || row < 0 || row >= this.engine.level.rows)
+        return;
+      this.engine.click(row, col);
+      this.ghost.setVisible(false);
+      this.notify();
     });
   }
   sprite(
@@ -254,9 +291,12 @@ export class GardenScene extends Phaser.Scene {
       for (const sound of e.drainSounds())
         this.options.audio?.play(sound.kind, sound.x, sound.source);
     if (!e.paused && e.status === "playing")
-      this.options.audio?.update(this.realTime, e.zombies.length / 18);
+      this.options.audio?.update(this.realTime, e.zombies.length / 18, e.level.scene);
     this.wasPaused = e.paused || e.status !== "playing";
-    if (this.ghost.visible && !e.selected) this.ghost.setVisible(false);
+    if (!e.selected && this.ghost.visible) {
+      this.ghost.setVisible(false);
+      this.hover.setVisible(false);
+    }
     if (_time - this.lastNotify > 80) {
       this.notify();
       this.lastNotify = _time;
@@ -275,13 +315,18 @@ export class GardenScene extends Phaser.Scene {
         const x = this.x(tile.col),
           y = this.y(tile.row);
         if (tile.type === "grave") {
-          g.fillStyle(0x77887d);
-          g.fillRoundedRect(x - 25, y - 30, 50, 61, 13);
-          g.lineStyle(3, 0x536456);
-          g.strokeRoundedRect(x - 25, y - 30, 50, 61, 13);
-          g.lineStyle(4, 0xa8b4a0);
-          g.lineBetween(x, y - 15, x, y + 9);
-          g.lineBetween(x - 10, y - 6, x + 10, y - 6);
+          // 墓碑：浅色石碑 + 深色描边，夜景里也能一眼看清
+          g.fillStyle(0x1d2a2c, 0.35);
+          g.fillEllipse(x, y + 27, 60, 16);
+          g.fillStyle(0xb8c2c0);
+          g.fillRoundedRect(x - 26, y - 34, 52, 66, 16);
+          g.lineStyle(3, 0x5f6d70);
+          g.strokeRoundedRect(x - 26, y - 34, 52, 66, 16);
+          g.fillStyle(0xffffff, 0.16);
+          g.fillRoundedRect(x - 20, y - 29, 14, 56, 7);
+          g.lineStyle(6, 0x7e8b8c);
+          g.lineBetween(x, y - 19, x, y + 11);
+          g.lineBetween(x - 12, y - 8, x + 12, y - 8);
         } else if (tile.type === "vase") {
           g.fillStyle(0xb79b73);
           g.fillEllipse(x, y + 1, 47, 55);
@@ -364,6 +409,17 @@ export class GardenScene extends Phaser.Scene {
           .setDisplaySize(160 * unit * pose.scaleX, 108 * unit * pose.scaleY)
           .setAngle(pose.angle).setAlpha(p.sleep ? 0.65 : 1);
       }
+      if (!articulatedPlants.has(p.id) && p.id !== 'chomper') {
+        const pose = plantBodyPose(p);
+        obj.setScale(obj.scaleX*pose.scaleX,obj.scaleY*pose.scaleY).setAngle(obj.angle+pose.angle);
+      }
+      const accent = plantAccent(p);
+      if (accent) {
+        const k = key+'accent'; keep.add(k);
+        this.sprite(k,'art-'+accent.image,obj.x,feetY(p.row,e.level.rows)+accent.offsetY,
+          70*accent.scale*bodyScale,70*accent.scale*bodyScale,obj.depth+.3)
+          .setAlpha(accent.alpha).setAngle(accent.angle);
+      }
       if (
         ["cherry", "doom", "jalapeno"].includes(p.id) &&
         p.age < 1 &&
@@ -388,17 +444,6 @@ export class GardenScene extends Phaser.Scene {
           2,
         );
       }
-      if (p.sleep) {
-        g.lineStyle(2, 0xdedbc2);
-        const x = this.x(p.col) + 15,
-          y = this.y(p.row) - 35;
-        g.strokePoints([
-          { x, y },
-          { x: x + 9, y },
-          { x, y: y + 9 },
-          { x: x + 9, y: y + 9 },
-        ]);
-      }
       if (p.ready && p.id === "cob") {
         g.lineStyle(3, 0xffe692);
         g.strokeCircle(this.x(p.col), this.y(p.row), 36);
@@ -407,7 +452,7 @@ export class GardenScene extends Phaser.Scene {
     for (const z of e.zombies) {
       const key = "z" + z.uid;
       keep.add(key);
-      const scale = zombieScale(z.id, e.level.id);
+      const scale = zombieScale(z.id);
       const appearance = zombieAppearance(z);
       const { natural, texture } = appearance;
       const previous = this.previous.get(z.uid);
@@ -438,7 +483,9 @@ export class GardenScene extends Phaser.Scene {
         .setFlipX(z.reverse)
         .setAlpha(z.underground ? 0.25 : 1);
       const pose = zombiePose(z);
-      obj.setAngle(pose.angle);
+      const extraPose = zombieVisualPose(z);
+      obj.setAngle(pose.angle + extraPose.angle);
+      obj.y += extraPose.offsetY;
       obj.setTint(
         z.freeze > 0
           ? 0x9edbec
@@ -455,6 +502,15 @@ export class GardenScene extends Phaser.Scene {
                   : 0xffffff,
       );
       if (z.flying) obj.y -= 17;
+      const accent = zombieAccent(z);
+      if (accent) {
+        const k=key+'accent';keep.add(k);
+        const frozen=accent==='iceblock', status=z.disarmed||z.ally;
+        this.sprite(k,'art-'+accent,this.x(renderX),frozen?foot-35*scale:status?foot-110*scale:foot-5,
+          (frozen?75:status?24:64)*scale,(frozen?90:status?24:36)*scale,obj.depth+.2)
+          .setAlpha(frozen?.55:status?.7:.3+Math.sin(z.motion*.3)*.1);
+      }
+
       if (!z.underground) {
         const width = 45 * scale,
           left = this.x(renderX) - width / 2,
@@ -496,22 +552,10 @@ export class GardenScene extends Phaser.Scene {
         y = this.y(t.row) + Math.sin(e.time * 3 + t.uid) * 3;
       g.fillStyle(t.coin ? 0xebc064 : 0xffd75c, 0.22);
       g.fillCircle(x, y, 29);
-      g.fillStyle(t.coin ? 0xdba641 : 0xffe28a);
-      g.fillCircle(x, y, t.coin ? 14 : 20);
-      g.lineStyle(3, t.coin ? 0xffe1a0 : 0xf9bb44);
-      g.strokeCircle(x, y, t.coin ? 12 : 18);
-      if (!t.coin) {
-        g.lineStyle(3, 0xffd75c);
-        for (let i = 0; i < 8; i++) {
-          const a = (i * Math.PI) / 4 + e.time * 0.2;
-          g.lineBetween(
-            x + Math.cos(a) * 23,
-            y + Math.sin(a) * 23,
-            x + Math.cos(a) * 28,
-            y + Math.sin(a) * 28,
-          );
-        }
-      }
+      const key='token'+t.uid;keep.add(key);
+      this.sprite(key,t.coin?'art-coin':'art-sun',x,y,t.coin?33:57,t.coin?39:57,80)
+        .setAngle(t.coin?Math.sin(e.time*3+t.uid)*8:e.time*12)
+        .setAlpha(t.age>13?.6+Math.sin(e.time*12)*.3:1);
     }
     for (const b of e.bowls) {
       const key = "b" + b.uid;
@@ -527,29 +571,22 @@ export class GardenScene extends Phaser.Scene {
       ).setAngle(e.time * 300);
     }
     for (const s of e.shots) {
-      const lob = ["cabbage", "kernel", "melon", "winter"].includes(s.type);
-      const progress = Math.min(
-        1,
-        Math.abs(s.x - s.originX) /
-          Math.max(0.1, Math.abs(s.destinationX - s.originX)),
-      );
-      const x = this.x(s.x),
-        y =
-          feetY(s.row, e.level.rows) -
-          55 -
-          (lob ? Math.sin(progress * Math.PI) * 100 : 0);
-      g.fillStyle(
-        ["snowpea", "winter"].includes(s.type)
-          ? 0xafedfa
-          : s.type === "fire"
-            ? 0xf6b54f
-            : s.type === "star"
-              ? 0xffdc7a
-              : 0xb4d96a,
-      );
-      g.fillCircle(x, y, ["melon", "winter"].includes(s.type) ? 12 : 7);
-      g.fillStyle(0xf0f5cb, 0.7);
-      g.fillCircle(x - 2, y - 3, 2);
+      if (projectileHidden(s)) continue;
+      const visual = projectileVisual(s);
+      const progress = Math.min(1, Math.abs(s.x - s.originX) / Math.max(0.1, Math.abs(s.destinationX - s.originX)));
+      const x = this.x(s.x), y = feetY(s.row, e.level.rows) - 55 - (visual.lob ? Math.sin(progress * Math.PI) * 100 : 0);
+      const target = e.zombies.find(z => z.uid === s.target);
+      const direction = s.direction < 0 ? -1 : 1;
+      const angle = s.type === 'cattail' && target
+        ? Phaser.Math.RadToDeg(Math.atan2(this.y(target.row)-this.y(s.row), this.x(target.x)-x))
+        : visual.spin ? e.time * (s.type === 'star' ? 340 : 190) : direction < 0 ? 180 : 0;
+      if (this.options.quality?.() !== 'low') {
+        g.fillStyle(visual.trail, .15);
+        for (let i=1; i<=3; i++) g.fillCircle(x-direction*i*7,y+(visual.lob?i*2:0),Math.max(1,5-i));
+      }
+      const key = 'shot' + s.uid;
+      keep.add(key);
+      this.sprite(key, 'art-'+visual.image, x,y,visual.width,visual.height,70).setAngle(angle);
     }
     const quality = this.options.quality?.() || "high";
     const limit = quality === "low" ? 32 : quality === "medium" ? 60 : 90;
@@ -563,6 +600,28 @@ export class GardenScene extends Phaser.Scene {
       let frame = 15,
         size = 35,
         alpha = 1 - t;
+      if (['magnet', 'wind', 'splash'].includes(fx.type)) {
+        keep.add(key);
+        const wind = fx.type === 'wind';
+        const size = fx.type === 'magnet' ? 64 : wind ? 125 : 90;
+        this.sprite(key, 'art-' + fx.type, x + (wind ? t*85 : 0),
+          feetY(fx.row,e.level.rows) - (fx.type === 'splash' ? 10 : 45),
+          size*(.7+t*.5),size*(.7+t*.5),72)
+          .setAlpha(Math.sin(Math.PI*t)*.9);
+        continue;
+      }
+      if (fx.type === 'shoot') {
+        const visual=projectileVisual({type:fx.source??'pea'});
+        if(t<.5) {
+          keep.add(key);
+          this.sprite(key,visual.image==='spore'?'art-spore':'art-impact',
+            this.x(fx.x + (fx.direction ?? 1)*0.35),feetY(fx.row,e.level.rows)-55,
+            visual.image==='spore'?26:16,visual.image==='spore'?22:16,72)
+            .setTint(visual.trail).setFlipX((fx.direction ?? 1)<0).setAlpha((1-t*2)*.65);
+        }
+        continue;
+      }
+
       if (fx.type === "boom") {
         frame = (fx.source === "doom" ? 4 : 0) + Math.min(3, Math.floor(t * 4));
         if (fx.source === "potato") frame = 10;
@@ -655,7 +714,7 @@ export class GardenScene extends Phaser.Scene {
         if (fx.zombie) {
           const z = fx.zombie,
             appearance = zombieAppearance(z);
-          const scale = zombieScale(z.id, e.level.id);
+          const scale = zombieScale(z.id);
           this.sprite(
             key,
             appearance.texture,
@@ -738,8 +797,9 @@ export class GardenScene extends Phaser.Scene {
         e.bossDown > 0 ? 1 : 0.5,
       );
       if (e.bossBall) {
-        g.fillStyle(e.bossBall.type === "fire" ? 0xf8ad54 : 0xa5dcea);
-        g.fillCircle(this.x(e.bossBall.x), this.y(e.bossBall.row), 30);
+        keep.add('boss-ball');
+        this.sprite('boss-ball',e.bossBall.type === 'fire' ? 'art-fire' : 'art-snowball',
+          this.x(e.bossBall.x),this.y(e.bossBall.row),86,72, 70).setAngle(e.bossBall.type === 'fire' ? 180 : e.time*100);
       }
     }
     for (const [k, obj] of this.objects)
@@ -761,6 +821,9 @@ export class GardenScene extends Phaser.Scene {
     this.fogKey = fogKey;
     this.fog.clear();
     if (fogVisible) {
+      // 按格铺满，块与块之间不留缝，看起来才是连成一片的雾。
+      const w = BOARD.cell,
+        h = BOARD.lawnHeight / e.level.rows;
       for (let r = 0; r < e.level.rows; r++)
         for (let c = 4; c < 9; c++) {
           const lit = lanterns.some(
@@ -771,12 +834,11 @@ export class GardenScene extends Phaser.Scene {
           );
           if (!lit) {
             this.fog.fillStyle(0xc4d8cf, 0.66);
-            this.fog.fillRoundedRect(
-              this.x(c) - 58,
-              this.y(r) - 50,
-              116,
-              110,
-              32,
+            this.fog.fillRect(
+              this.x(c) - w / 2,
+              this.y(r) - h / 2,
+              w + 1,
+              h + 1,
             );
           }
         }

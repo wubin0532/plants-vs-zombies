@@ -10,6 +10,8 @@ export type PlantDef = {
   desc: string;
   damage?: number;
   interval?: number;
+  /** 每轮真实连发的弹丸数量，缺省为 1。 */
+  burst?: number;
   upgrade?: string;
 };
 const p = (
@@ -110,8 +112,8 @@ export const plants: PlantDef[] = [
     "shooter",
     9,
     "#48955b",
-    "连续射出两颗豌豆。",
-    { damage: 40, interval: 1.4 },
+    "每轮连续射出两颗豌豆，每颗 20 伤害。",
+    { damage: 20, interval: 1.4, burst: 2 },
   ),
   p(
     "puff",
@@ -139,7 +141,7 @@ export const plants: PlantDef[] = [
     "fume",
     13,
     "#a67bbd",
-    "喷出穿透烟雾，同时伤害前方近处的敌人。",
+    "喷出穿透烟雾，越过铁栅门伤害前方近处的敌人；头盔仍需先打碎。",
     { damage: 20, interval: 1.4 },
   ),
   p(
@@ -203,7 +205,7 @@ export const plants: PlantDef[] = [
     "shooter",
     23,
     "#70aa53",
-    "同时攻击所在行与相邻两行。",
+    "同时攻击所在行与相邻两行，每条有效路线一颗豌豆。",
     { damage: 20, interval: 1.4 },
   ),
   p(
@@ -294,10 +296,10 @@ export const plants: PlantDef[] = [
     "shooter",
     36,
     "#96b362",
-    "同时照顾前方与后方的敌人。",
+    "前方发射一颗豌豆，后方同时发射两颗。",
     { damage: 20, interval: 1.4 },
   ),
-  p("star", "杨桃", 125, "star", 37, "#e9bf49", "向周围多个方向发射星星。", {
+  p("star", "杨桃", 125, "star", 37, "#e9bf49", "向正后方与四个斜向共五个固定方向发射星星。", {
     damage: 20,
     interval: 1.4,
   }),
@@ -338,7 +340,7 @@ export const plants: PlantDef[] = [
     "lob",
     43,
     "#e6c96a",
-    "抛射玉米粒，偶尔用黄油定住僵尸。",
+    "抛射玉米粒，约四分之一概率投出黄油：伤害翻倍并把僵尸定住。",
     { damage: 20, interval: 2.8 },
   ),
   p("coffee", "咖啡豆", 75, "coffee", 44, "#8c6151", "唤醒白天睡着的蘑菇。"),
@@ -387,8 +389,8 @@ export const plants: PlantDef[] = [
     "shooter",
     51,
     "#5b9157",
-    "种在双发射手上，每轮四连发。",
-    { damage: 80, interval: 1.4, upgrade: "repeater", cooldown: 50 },
+    "种在双发射手上，每轮连续射出四颗豌豆，每颗 20 伤害。",
+    { damage: 20, interval: 1.4, burst: 4, upgrade: "repeater", cooldown: 50 },
   ),
   p(
     "twin",
@@ -417,8 +419,8 @@ export const plants: PlantDef[] = [
     "homing",
     51,
     "#bd9f78",
-    "升级睡莲，追踪任意路线和空中的目标。",
-    { upgrade: "lily", damage: 40, interval: 1.4, cooldown: 50 },
+    "升级睡莲，每轮射出两枚尖刺，追踪任意路线和空中的目标。",
+    { upgrade: "lily", damage: 20, interval: 1.4, burst: 2, cooldown: 50 },
   ),
   p(
     "winter",
@@ -520,7 +522,16 @@ export const zombies: ZombieDef[] = [
   z("zomboni", "冰车僵尸", 1650, 16, 0, "碾压植物并留下不能种植的冰道。", "地刺能扎破冰车；火爆辣椒可以清除冰道。", ["spike", "spikerock", "jalapeno"]),
   z("bobsled", "雪橇僵尸小队", 800, 25, 0, "沿着冰道快速推进。", "清除冰道后，雪橇小队就失去了速度。", ["jalapeno"]),
   z("dolphin", "海豚骑士僵尸", 400, 34, 0, "快速游动，跳过第一株矮植物。", "高坚果能拦住它的跳跃。", ["tallnut"]),
-  z("jack", "玩偶匣僵尸", 340, 18, 0, "随身的盒子可能爆炸并摧毁附近植物。", "尽快远程消灭，别让它走进植物阵中。"),
+  z(
+    "jack",
+    "玩偶匣僵尸",
+    340,
+    18,
+    0,
+    "随身的盒子可能爆炸并摧毁附近植物。",
+    "磁力菇能吸走盒子，让它变成普通僵尸；否则尽快远程消灭。",
+    ["magnet"],
+  ),
   z("balloon", "气球僵尸", 200, 12, 0, "飞过普通植物，需要防空能力应对。", "仙人掌能击落气球，三叶草可以直接吹走。", ["cactus", "blover", "cattail"]),
   z("digger", "矿工僵尸", 270, 25, 0, "钻到庭院左侧后向右啃食。", "裂荚射手能向后攻击；磁力菇能吸走矿镐。", ["split", "magnet"]),
   z("pogo", "跳跳僵尸", 400, 22, 0, "不断跳过矮植物，磁力菇能吸走跳杆。", "磁力菇吸走跳杆后就只能步行。", ["magnet"]),

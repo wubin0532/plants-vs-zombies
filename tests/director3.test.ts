@@ -8,32 +8,36 @@ function totalPrice(e: Engine) {
     total += e.composeWave(w).reduce((s, id) => s + unitPrice[id], 0);
   return total;
 }
+/** composeWave 会推进导演内部状态，每个用例只用一次，保证对比公平。 */
+function seedTotal(setup: (e: Engine) => void) {
+  const e = new Engine(8, [], 42);
+  setup(e);
+  return totalPrice(e);
+}
 it("受挫减档：丢车或损失植物降低预算，下限 0.6", () => {
-  const base = totalPrice(new Engine(8, [], 42));
-  const mowed = new Engine(8, [], 42);
-  mowed.mowersLost = 1;
-  expect(totalPrice(mowed)).toBeLessThan(base);
-  const beaten = new Engine(8, [], 42);
-  beaten.plantsLost = 6;
-  expect(totalPrice(beaten)).toBeLessThan(base);
-  const both = new Engine(8, [], 42);
-  both.mowersLost = 2;
-  both.plantsLost = 9;
-  const bothTotal = totalPrice(both);
-  expect(bothTotal).toBeLessThan(totalPrice(mowed));
+  const base = seedTotal(() => {});
+  const mowed = seedTotal((e) => (e.mowersLost = 1));
+  const beaten = seedTotal((e) => (e.plantsLost = 6));
+  const bothTotal = seedTotal((e) => {
+    e.mowersLost = 2;
+    e.plantsLost = 9;
+  });
+  expect(mowed).toBeLessThan(base);
+  expect(beaten).toBeLessThan(base);
+  expect(bothTotal).toBeLessThan(mowed);
   const slots = new Engine(8, [], 42).schedule.length;
   expect(bothTotal).toBeGreaterThanOrEqual(Math.floor(slots * 0.6));
 });
 it("碾压加档：阳光充裕且无丢车时预算上调", () => {
-  const base = totalPrice(new Engine(8, [], 42));
-  const rich = new Engine(8, [], 42);
-  rich.sun = 700;
-  expect(totalPrice(rich)).toBeGreaterThan(base);
-  const broke = new Engine(8, [], 42);
-  broke.sun = 700;
-  broke.mowersLost = 1;
-  const bothTotal = totalPrice(broke);
-  expect(bothTotal).toBeLessThanOrEqual(base);
+  const base = seedTotal(() => {});
+  const rich = seedTotal((e) => (e.sun = 700));
+  expect(rich).toBeGreaterThan(base);
+  // 已经丢车的玩家即使阳光充裕也不再加档。
+  const broke = seedTotal((e) => {
+    e.sun = 700;
+    e.mowersLost = 1;
+  });
+  expect(broke).toBeLessThanOrEqual(base);
 });
 it("新手保护：前三关与 casual 不受减档", () => {
   const novice = new Engine(1, [], 42);

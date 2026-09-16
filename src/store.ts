@@ -19,6 +19,7 @@ export type Save = {
   daily: { date: string; best: number };
   achievements: string[];
   items: Record<string, number>;
+  seedSlots: number;
   kills: number;
   contrast: boolean;
   fontSize: "small" | "standard" | "large";
@@ -45,6 +46,7 @@ export const initial = (): Save => ({
   daily: { date: "", best: 0 },
   achievements: [],
   items: {},
+  seedSlots: 0,
   kills: 0,
   contrast: false,
   fontSize: "standard",
@@ -136,10 +138,15 @@ export function validateSave(data: unknown): Save {
       d.items && typeof d.items === "object"
         ? Object.fromEntries(
             Object.entries(d.items).filter(
-              ([, n]) => Number.isInteger(n) && n > 0 && n <= 99,
+              ([id, n]) =>
+                id !== "ice-start" && Number.isInteger(n) && n > 0 && n <= 99,
             ),
           )
         : {},
+    seedSlots:
+      Number.isInteger(d.seedSlots) && d.seedSlots >= 0 && d.seedSlots <= 10
+        ? d.seedSlots
+        : 0,
     kills: Number.isInteger(d.kills) && d.kills >= 0 ? d.kills : 0,
     contrast: typeof d.contrast === "boolean" ? d.contrast : false,
     fontSize: ["small", "standard", "large"].includes(d.fontSize)
@@ -164,6 +171,8 @@ export function validateSave(data: unknown): Save {
   };
 }
 const key = "pvz-garden-save-v1";
+export const seedSlotPriceFor = (seedSlots: number) =>
+  seedSlots === 0 ? 1500 : seedSlots < 4 ? 2500 : 5000;
 export const useSave = defineStore("save", {
   state: () => ({ data: initial(), warning: "" }),
   actions: {
