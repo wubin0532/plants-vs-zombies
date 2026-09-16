@@ -1,7 +1,7 @@
 import type Phaser from 'phaser';
 import type { Engine } from './engine';
-import { BOARD, cellX, cellY } from './layout';
-import { fogActive, foggedAt, lanternsIn } from './visibility';
+import { BOARD } from './layout';
+import { fogActive, lanternsIn, lightFalloff } from './visibility';
 
 /** Canvas compositing also works with Phaser's Canvas fallback (no WebGL-only mask). */
 export class FogRenderer {
@@ -36,27 +36,29 @@ export class FogRenderer {
     const lights = lanternsIn(e);
     const key = `${e.level.rows}:` + lights.map(p => `${p.row},${p.col}`).sort().join(';');
     const changed = key !== this.key;
-    if (changed) {
+    if (changed || e.time !== this.lastTime) {
       this.key = key;
       const g = this.mask.getContext('2d')!;
       const data = g.createImageData(600, 345);
-      const clear: { left: number; top: number; right: number; bottom: number }[] = [];
       const h = BOARD.lawnHeight / e.level.rows;
-      for (let r = 0; r < e.level.rows; r++) for (let c = 0; c < 9; c++) {
-        if (!foggedAt(e, r, c, lights)) clear.push({ left: cellX(c) - BOARD.cell / 2,
-          right: cellX(c) + BOARD.cell / 2, top: cellY(r, e.level.rows) - h / 2,
-          bottom: cellY(r, e.level.rows) + h / 2 });
-      }
       for (let y = 0; y < 345; y++) for (let x = 0; x < 600; x++) {
         const px = x * 2 + 1, py = y * 2 + 1;
         if (px < BOARD.left || px > BOARD.left + BOARD.cell * 9 || py < BOARD.top || py > BOARD.top + BOARD.lawnHeight) continue;
-        // Feather into the fog only: a revealed cell is always completely clear.
-        let distance = Math.min(py - BOARD.top, BOARD.top + BOARD.lawnHeight - py, BOARD.left + BOARD.cell * 9 - px, 42);
-        for (const rect of clear) distance = Math.min(distance, Math.hypot(
-          Math.max(rect.left - px, 0, px - rect.right), Math.max(rect.top - py, 0, py - rect.bottom)));
+        const col = (px - BOARD.left) / BOARD.cell;
+        const row = (py - BOARD.top) / h;
+        // Mist advances from right to left. The first fogged column is pale,
+        // while the far right is dense enough to hide silhouettes completely.
+        const spread = Math.max(0, Math.min(1, (col - 3.15) / 5.85));
+        const cloud =
+          Math.sin(px * .047 + e.time * .42) * .11 +
+          Math.sin(py * .071 - e.time * .28) * .09 +
+          Math.sin((px + py) * .021 + e.time * .18) * .07;
+        const density = Math.max(0, Math.min(1, .06 + spread * .76 + cloud));
+        const reveal = lightFalloff(e, row, col);
+        const alpha = density * (1 - reveal);
         const offset = (y * 600 + x) * 4;
         data.data[offset] = data.data[offset + 1] = data.data[offset + 2] = 255;
-        data.data[offset + 3] = Math.round(255 * Math.min(1, distance / 42));
+        data.data[offset + 3] = Math.round(255 * alpha);
       }
       g.putImageData(data, 0, 0);
     }
