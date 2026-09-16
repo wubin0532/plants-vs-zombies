@@ -19,7 +19,7 @@ import {
   isMushroom,
 } from "./game/content";
 import type { PlantDef, ZombieDef } from "./game/content";
-import { plantImage, zombieImage, gardenImage } from "./game/art";
+import { plantImage, zombieImage, gardenImage, bowlImage } from "./game/art";
 import { battleSettings, defaultOptions } from "./game/difficulty";
 import { dailyChallenge } from "./game/daily";
 import { achievementDefs, checkAchievements } from "./achievements";
@@ -60,6 +60,7 @@ let game: Awaited<ReturnType<typeof mountGame>> | undefined;
 let gameGeneration = 0, starting = false;
 let lastRestartKey = -1e9;
 const audio = new GardenAudio();
+const lessonOpen = ref(false);
 let settled = false;
 const level = computed(() => levels[levelId.value - 1]);
 const available = computed(() =>
@@ -100,6 +101,13 @@ const stats = computed(() => {
   void tick.value;
   const e = engine.value;
   return {
+    toolUses: e?.toolUses ?? 0,
+    toolSource: e?.toolSource ?? 0,
+    toolHint: e?.toolHint ?? "",
+    hammer: e?.hammer ?? "ice",
+    reactions: e?.reactions ?? 0,
+    weather: e && e.windUntil > e.time ? "寒风" : e && e.rainUntil > e.time ? "阳光雨" : "",
+    weatherSeconds: e ? Math.ceil(Math.max(e.windUntil, e.rainUntil) - e.time) : 0,
     sun: e?.sun || 0,
     selected: e?.selected || "",
     paused: e?.paused || false,
@@ -116,6 +124,43 @@ const stats = computed(() => {
     nextWave: Math.ceil(e?.nextWaveIn || 0),
   };
 });
+const lesson = computed(() => {
+  const e = engine.value;
+  if (!e || !e.toolsUnlocked) return null;
+  const mode = e.level.mode;
+  if (mode === "bowling") return { id: "elements-bowling", title: "先冰后电，让坚果拐个弯", text: "冰球减速，电球命中冰系目标会爆发并向邻排传导。选「滚球换排」，点一颗球，再点相邻排；每局 3 次，球不会停下来等你。" };
+  if (mode === "whack") return { id: "elements-whack", title: "冰锤铺路，电锤收场", text: "切换冰锤（20 伤害、冻结 3 秒）和电锤（120 伤害）。先冰后电触发爆发，两锤共享 0.4 秒间隔。紧急冰冻可冻结所选九宫格，每局 3 次。" };
+  if (mode === "vases") return { id: "elements-vases", title: "认准两只组合罐", text: "带冰、电植物标记的罐子各藏一张种子卡，点击开罐后再种植。其他罐子仍有惊喜和危险。移植能调整阵型；水路先种睡莲。" };
+  if (mode === "boss") return { id: "elements-boss", title: "用冰电清理召唤物", text: "冰、电植物随机供给，不保证配齐。组合只伤害召唤物，不能伤害僵王本体。继续保留寒冰菇和火爆辣椒应对冰火球；移植每局 3 次。" };
+  if (e.isBelt) return { id: "elements-belt", title: "随机来牌，灵活配合", text: "传送带加入寒冰射手与电弧花，不保证成对出现。配齐时消耗冰系控制换取爆发；没配齐仍可按原阵容防守。移植每局 3 次，水路与屋顶需要底座。" };
+  if (e.level.id >= 8 || e.cards.includes("arc")) return { id: "elements-arc", title: "冰电爆发，控制换伤害", text: "电弧花需要 225 阳光。平时单体电击；命中冰系目标时，解除其冰系控制、追加 100 伤害，并向附近至多 3 个敌人各传导 80 伤害。移植带走主植物和南瓜，每局 3 次。" };
+  return { id: "elements-transplant", title: "给防线一次挪动的机会", text: "选「移植」，点主植物，再点绿色空格。每局免费 3 次，成功才扣次数；保留血量与冷却，南瓜一起搬，睡莲和花盆留在原地。再点工具或按 Esc 可取消。" };
+});
+function closeLesson() {
+  if (lesson.value && !save.data.tutorialSeen.includes(lesson.value.id)) {
+    save.data.tutorialSeen.push(lesson.value.id);
+    save.persist();
+  }
+  lessonOpen.value = false;
+  if (engine.value) engine.value.paused = false;
+  tick.value++;
+}
+function showLesson() {
+  if (!engine.value || engine.value.status !== "playing") return;
+  lessonOpen.value = true;
+  engine.value.paused = true;
+  tick.value++;
+}
+function useGardenTool() { engine.value?.selectTool(); tick.value++; }
+function chooseHammer(kind: "ice" | "electric") { engine.value?.selectHammer(kind); tick.value++; }
+function seedName(id: string) {
+  return engine.value?.level.mode === "bowling" && id === "snowpea" ? "寒冰球" :
+    engine.value?.level.mode === "bowling" && id === "arc" ? "电球" : plantById[id].name;
+}
+function seedPortrait(id: string) {
+  return engine.value?.level.mode === "bowling" && ["snowpea", "arc"].includes(id) ?
+    bowlImage(id === "snowpea" ? "ice" : "electric") : plantImage(id);
+}
 const pa = plantImage,
   za = zombieImage;
 const tip = (item: PlantDef | ZombieDef) => ("tip" in item ? item.tip : "");
@@ -133,7 +178,7 @@ const daily = computed(() => dailyChallenge(new Date(), save.data.unlocked));
 const recommended = computed(
   () =>
     new Set(
-      level.value.enemies.flatMap((id) => zombieById[id]?.counters ?? []),
+      [...level.value.enemies.flatMap((id) => zombieById[id]?.counters ?? []), ...(level.value.id >= 8 ? ["snowpea", "arc"] : [])],
     ),
 );
 const bestTimes = computed(() => {
@@ -256,6 +301,7 @@ function chooseLevel(id: number) {
           "wallnut",
           "potato",
           "snowpea",
+          ...(id >= 8 ? ["arc"] : []),
           "cherry",
           "repeater",
           "chomper",
@@ -338,6 +384,7 @@ async function start() {
       ),
     );
     engine.value.imitate = imitate.value;
+    engine.value.toolsUnlocked ||= save.data.unlocked >= 6;
     const items = save.data.items;
     let usedItem = false;
     if ((items["sun-boost"] ?? 0) > 0) {
@@ -363,6 +410,8 @@ async function start() {
     newAchievements.value = [];
     page.value = "game";
     playing.value = true;
+    lessonOpen.value = !!lesson.value && !save.data.tutorialSeen.includes(lesson.value.id);
+    engine.value.paused = lessonOpen.value;
     await nextTick();
     if (generation !== gameGeneration || !gameEl.value) return;
     window.scrollTo(0, 0);
@@ -415,7 +464,15 @@ async function start() {
           save.persist();
         }
       },
-      { audio, quality: () => save.data.quality, shake: () => save.data.shake, contrast: () => save.data.contrast },
+      {
+        audio, quality: () => save.data.quality, shake: () => save.data.shake, contrast: () => save.data.contrast,
+        pickupTarget: (coin) => {
+          const canvas = gameEl.value?.querySelector("canvas")?.getBoundingClientRect();
+          const badge = document.querySelector(coin ? ".coin-counter" : ".seed-tray .sun-counter")?.getBoundingClientRect();
+          if (!canvas?.width || !badge) return undefined;
+          return { x: (badge.left + badge.width / 2 - canvas.left) * 1200 / canvas.width, y: 0 };
+        },
+      },
     );
     if (generation === gameGeneration) game = mounted;
     else mounted.destroy(true);
@@ -460,6 +517,7 @@ const flagMarks = computed(() => {
 function selectSeed(id: string) {
   const e = engine.value;
   if (!e || e.paused || e.status !== "playing") return;
+  if (e.level.mode === "whack") return;
   if (
     id !== "shovel" &&
     !e.isBelt &&
@@ -473,12 +531,14 @@ function selectSeed(id: string) {
     audio.play("click");
     return;
   }
-  e.selected = e.selected === id ? "" : id;
+  const selected = e.selected === id;
+  e.cancelSelection();
+  e.selected = selected ? "" : id;
   tick.value++;
   audio.play("click");
 }
 function pause() {
-  if (engine.value?.status === "playing") {
+  if (engine.value?.status === "playing" && !lessonOpen.value) {
     engine.value.paused = !engine.value.paused;
     if (engine.value.paused) audio.stop();
     else void audio.unlock();
@@ -585,13 +645,15 @@ function keyboard(e: KeyboardEvent) {
   }
   if (e.code === "Escape") {
     if (engine.value) {
-      engine.value.selected = "";
-      engine.value.cannon = 0;
+      engine.value.cancelSelection();
     }
     if (full.value && !document.fullscreenElement) void exitBattleFullscreen();
     tick.value++;
   }
   if (e.key === "s" || e.key === "S") selectSeed("shovel");
+  if (e.key.toLowerCase() === "t") useGardenTool();
+  if (e.key.toLowerCase() === "q") chooseHammer("ice");
+  if (e.key.toLowerCase() === "e") chooseHammer("electric");
   if ((e.key === "r" || e.key === "R") && engine.value) {
     if (result.value || performance.now() - lastRestartKey < 3000) void start();
     else {
@@ -1036,15 +1098,15 @@ onBeforeUnmount(() => {
           <div class="seed-tray">
             <div class="sun-counter">
               <span class="sun-icon"></span
-              ><strong>{{ engine?.isBelt ? "传送带" : stats.sun }}</strong
+              ><strong :key="'sun-' + stats.sun" class="resource-count">{{ engine?.isBelt ? "传送带" : stats.sun }}</strong
               ><small>{{ engine?.isBelt ? "免费种植" : "阳光储备" }}</small>
             </div>
             <div class="sun-counter coin-counter" title="本局收集的金币">
               <span class="coin-icon"></span
-              ><strong>{{ stats.coins }}</strong
+              ><strong :key="'coins-' + stats.coins" class="resource-count">{{ stats.coins }}</strong
               ><small>金币</small>
             </div>
-            <div class="battle-seeds">
+            <div v-if="engine?.level.mode !== 'whack'" class="battle-seeds">
               <button
                 v-for="(id, i) in engine?.isBelt ? stats.belt : chosen"
                 :key="id + '-' + i"
@@ -1058,12 +1120,12 @@ onBeforeUnmount(() => {
                       stats.cooldowns[id] > 0),
                 }"
                 @click="selectSeed(id)"
-                :aria-label="'选择' + plantById[id].name"
+                :aria-label="'选择' + seedName(id)"
                 :aria-pressed="stats.selected === id"
               >
                 <span class="key">{{ i + 1 }}</span
-                ><img :src="pa(id)" :alt="plantById[id].name" /><span>{{
-                  plantById[id].name
+                ><img :src="seedPortrait(id)" :alt="seedName(id)" /><span>{{
+                  seedName(id)
                 }}</span
                 ><strong>{{
                   engine?.isBelt ? "免费" : engine!.getDef(id).cost
@@ -1080,7 +1142,12 @@ onBeforeUnmount(() => {
                 ></div>
               </button>
             </div>
+            <div v-else class="hammer-tray" aria-label="选择锤子">
+              <button :aria-pressed="stats.hammer === 'ice' && stats.selected !== 'tool'" @click="chooseHammer('ice')">冰锤 <small>Q · 冻结</small></button>
+              <button :aria-pressed="stats.hammer === 'electric' && stats.selected !== 'tool'" @click="chooseHammer('electric')">电锤 <small>E · 爆发</small></button>
+            </div>
             <button
+              v-if="!['whack', 'bowling'].includes(engine?.level.mode || '')"
               class="shovel"
               :class="{ selected: stats.selected === 'shovel' }"
               @click="selectSeed('shovel')"
@@ -1088,8 +1155,20 @@ onBeforeUnmount(() => {
               <span class="shovel-icon" aria-hidden="true">♠</span
               ><span>铲子</span>
             </button>
+            <button v-if="engine?.toolsUnlocked" class="garden-tool" :class="{ selected: stats.selected === 'tool' }"
+              :aria-pressed="stats.selected === 'tool'" :disabled="stats.toolUses === 0 || stats.paused"
+              :title="stats.toolHint" @click="useGardenTool">
+              <span>{{ stats.selected === 'tool' ? '取消' : engine.toolName }}</span><strong>{{ stats.toolUses }} / 3</strong><small>T · 工具</small>
+            </button>
+          </div>
+          <div v-if="engine?.toolsUnlocked" class="mechanic-strip">
+            <span>{{ stats.selected === 'tool' ? stats.toolHint : engine?.level.mode === 'whack' ? '先冰后电 · Q / E 切锤' : '冰电爆发 ' + stats.reactions + ' 次 · T 使用工具' }}</span>
+            <button v-if="lesson" @click="showLesson">玩法说明</button>
           </div>
           <div class="canvas-wrap">
+            <div v-if="stats.weather" class="weather-badge" :class="{ warm: stats.weather === '阳光雨' }">
+              <span>{{ stats.weather }}</span><small>{{ stats.weatherSeconds }} 秒 · {{ stats.weather === '寒风' ? '全场减速' : '阳光加速' }}</small>
+            </div>
             <div ref="gameEl" class="phaser-mount" aria-label="游戏草坪"></div>
             <div
               v-if="stats.message && !stats.paused && !result"
@@ -1098,7 +1177,15 @@ onBeforeUnmount(() => {
             >
               {{ stats.message }}
             </div>
-            <div v-if="stats.paused && !modal && !result" class="game-overlay">
+            <div v-if="lessonOpen && lesson && !result" class="game-overlay lesson-overlay">
+              <div class="pause-card lesson-card">
+                <span class="kicker">庭院新发现</span><h2>{{ lesson.title }}</h2>
+                <p>{{ lesson.text }}</p>
+                <button class="primary" @click="closeLesson">开始体验</button>
+                <button class="text-button" @click="closeLesson">跳过提示</button>
+              </div>
+            </div>
+            <div v-if="stats.paused && !lessonOpen && !modal && !result" class="game-overlay">
               <div class="pause-card">
                 <span class="kicker">TAKE A LITTLE BREAK</span>
                 <h2>庭院，等你回来。</h2>

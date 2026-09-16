@@ -20,6 +20,7 @@ it("寒风：触发一次且仅一次，全场僵尸减速", () => {
   expect(e.eventAt).toBe(-1);
   expect(e.zombies[0].slow).toBeGreaterThan(4);
   expect(e.message).toContain("寒风");
+  expect(e.windUntil).toBeGreaterThan(e.time);
   for (let i = 0; i < 100; i++) {
     e.step(0.1);
     expect(e.eventAt).toBe(-1);

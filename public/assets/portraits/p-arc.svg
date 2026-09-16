@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+<defs><radialGradient id="petal"><stop stop-color="#f0ffff"/><stop offset="1" stop-color="#54becb"/></radialGradient><linearGradient id="leaf" x2="1" y2="1"><stop stop-color="#b9dc64"/><stop offset="1" stop-color="#438452"/></linearGradient><radialGradient id="face"><stop stop-color="#fff8b7"/><stop offset="1" stop-color="#e8b24e"/></radialGradient></defs>
+<ellipse cx="124" cy="237" rx="78" ry="12" fill="#283e2b" opacity=".18"/>
+<g stroke="#315e4c" stroke-width="5" stroke-linejoin="round"><path d="M122 231Q148 183 129 126" fill="none" stroke-width="15"/><path d="M130 208Q79 159 48 193Q69 235 130 222M135 207Q181 166 216 192Q186 230 132 223" fill="url(#leaf)"/><path d="M130 215L72 196M142 214L194 195" fill="none" stroke-width="3"/></g>
+<g fill="url(#petal)" stroke="#316a76" stroke-width="4"><ellipse cx="128" cy="53" rx="27" ry="42"/><ellipse cx="179" cy="76" rx="27" ry="42" transform="rotate(54 179 76)"/><ellipse cx="182" cy="128" rx="27" ry="42" transform="rotate(110 182 128)"/><ellipse cx="131" cy="153" rx="27" ry="39"/><ellipse cx="77" cy="129" rx="27" ry="42" transform="rotate(65 77 129)"/><ellipse cx="75" cy="76" rx="27" ry="42" transform="rotate(-52 75 76)"/></g>
+<circle cx="129" cy="102" r="45" fill="url(#face)" stroke="#745b35" stroke-width="5"/>
+<path d="M132 61L113 96H129L120 124L148 86H131L144 61" fill="#fff8d5" stroke="#d28c36" stroke-width="2"/>
+<g fill="#283b3c"><ellipse cx="106" cy="108" rx="6" ry="10"/><ellipse cx="154" cy="107" rx="6" ry="10"/></g><g fill="white"><circle cx="108" cy="104" r="2"/><circle cx="156" cy="103" r="2"/></g>
+<path d="M117 130Q129 139 142 128" fill="none" stroke="#745b35" stroke-width="4" stroke-linecap="round"/>
+<path d="M46 54L30 77L43 75L33 95M210 41L195 64L209 61L201 80" fill="none" stroke="#ffe07e" stroke-width="6" stroke-linecap="round"/>
+</svg>

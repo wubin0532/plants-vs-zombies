@@ -148,8 +148,8 @@ describe("场地与能力", () => {
 describe("内容与存档", () => {
   it("50 关引用的敌人与植物均存在，全部图鉴唯一", () => {
     expect(levels).toHaveLength(50);
-    expect(plants).toHaveLength(49);
-    expect(new Set(plants.map((p) => p.id)).size).toBe(49);
+    expect(plants).toHaveLength(50);
+    expect(new Set(plants.map((p) => p.id)).size).toBe(50);
     for (const l of levels)
       for (const id of l.enemies) expect(zombieById[id]).toBeDefined();
     for (const p of plants)

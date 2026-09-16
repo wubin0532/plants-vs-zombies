@@ -34,6 +34,8 @@ const p = (
   ...extra,
 });
 export const plants: PlantDef[] = [
+  p("arc", "电弧花", 225, "electric", 8, "#77dfed",
+    "每 2 秒电击前方单体，伤害 20。消耗目标冰系控制，追加 100 伤害，并向附近至多 3 个敌人各传导 80 伤害。", { damage: 20, interval: 2 }),
   p(
     "pea",
     "豌豆射手",

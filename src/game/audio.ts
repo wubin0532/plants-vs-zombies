@@ -1,5 +1,8 @@
 import { isMushroom } from "./content";
 export type SoundKind =
+  | "coin"
+  | "electric"
+  | "conduction"
   | "smash"
   | "chomp"
   | "land"
@@ -185,7 +188,7 @@ export class GardenAudio {
         ? "music"
         : kind === "ambient"
           ? "environment"
-          : ["sun", "click", "win", "lose"].includes(kind)
+          : ["sun", "coin", "click", "win", "lose"].includes(kind)
             ? "ui"
             : "battle";
     const bus = ctx.createGain(),
@@ -315,6 +318,14 @@ export class GardenAudio {
         voice(510, 140, 0.11, 0.19, "triangle");
         noise(0.055, 1700, 0.12);
         break;
+      case "electric":
+        voice(850, 240, 0.09, 0.09, "triangle");
+        break;
+      case "conduction":
+        voice(1400, 380, 0.22, 0.15, "triangle");
+        voice(1900, 900, 0.16, 0.08, "sine", 0.04);
+        noise(0.12, 2200, 0.1);
+        break;
       case "frost":
         voice(1100, 410, 0.19, 0.13);
         noise(0.16, 4600, 0.13);
@@ -410,6 +421,10 @@ export class GardenAudio {
         voice(1320 * pitch, 1320 * pitch, 0.24, 0.11, "sine", 0.09);
         break;
       }
+      case "coin":
+        voice(1568, 1568, 0.12, 0.10, "sine");
+        voice(2093, 2093, 0.18, 0.07, "sine", 0.05);
+        break;
       case "warning":
         voice(740, 740, 0.13, 0.14, "square");
         voice(554, 554, 0.15, 0.14, "square", 0.15);

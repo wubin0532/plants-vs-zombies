@@ -6,6 +6,7 @@ import {
 import { defineStore } from "pinia";
 export type Save = {
   version: 2;
+  tutorialSeen: string[];
   unlocked: number;
   completed: number[];
   coins: number;
@@ -32,6 +33,7 @@ export type Save = {
 };
 export const initial = (): Save => ({
   version: 2,
+  tutorialSeen: [],
   unlocked: 1,
   completed: [],
   coins: 0,
@@ -78,6 +80,7 @@ export function validateSave(data: unknown): Save {
     ...d,
     version: 2,
     completed: complete,
+    tutorialSeen: Array.isArray(d.tutorialSeen) ? [...new Set(d.tutorialSeen.filter((v) => typeof v === "string"))].slice(0, 30) : [],
     mix: Object.fromEntries(
       Object.entries(initial().mix).map(([key, value]) => [
         key,

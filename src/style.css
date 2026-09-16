@@ -770,13 +770,32 @@ footer i {
   margin-top: 3px;
 }
 .coin-counter {
-  width: 72px;
+  width: 82px;
+  min-height: 66px;
+  border: 1px solid #d8b35f;
+  border-radius: 13px;
+  background: linear-gradient(145deg, #fff8dc, #f2e2ae);
+  box-shadow: inset 0 1px 0 #fffef0, 0 3px 0 #c4a45a55;
+  position: relative;
+  overflow: hidden;
+}
+.coin-counter::after {
+  content: "战利品";
+  position: absolute;
+  right: 5px;
+  top: 5px;
+  padding: 1px 4px;
+  border-radius: 5px;
+  color: #8d6726;
+  background: #ead092;
+  font-size: 7px;
+  letter-spacing: .08em;
 }
 .coin-icon {
   display: block;
-  width: 22px;
-  height: 22px;
-  margin-top: 2px;
+  width: 24px;
+  height: 24px;
+  margin-top: 4px;
   border-radius: 50%;
   background: radial-gradient(circle at 35% 35%, #ffe9a3, #d9a843 70%);
   box-shadow:
@@ -787,6 +806,14 @@ footer i {
   color: #a87c1e;
   font-weight: 700;
 }
+.coin-counter strong { color: #7e5b1f; font-size: 21px; letter-spacing: .02em; }
+.coin-counter small { color: #8d6726; }
+.resource-count { animation: resource-pop .28s ease-out; }
+@keyframes resource-pop { 40% { transform: scale(1.18); color: #bd842e; } }
+.weather-badge { position: absolute; z-index: 5; left: 18%; top: 4%; pointer-events: none; padding: 6px 12px; border: 1px solid #d2f4ff; border-radius: 18px; background: #305864df; color: #edfcff; box-shadow: 0 2px 8px #172f3340; display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.weather-badge small { font-size: 10px; opacity: .85; }
+.weather-badge.warm { border-color: #fff0bd; color: #fff5cb; background: #785c2de8; }
+@media (prefers-reduced-motion: reduce) { .resource-count { animation: none; } }
 .battle-seeds {
   display: flex;
   gap: 7px;
@@ -2461,4 +2488,49 @@ body.battle-fullscreen {
 .immersive .battle-seed > span:not(.key) {
   line-height: 1;
   margin: 0;
+}
+
+/* Garden tools retain the seed tray's warm paper and green selected state. */
+.garden-tool { flex: 0 0 82px; min-height: 76px; border: 2px solid #7e8c58; border-radius: 12px; background: #f6efce; color: #344e38; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; }
+.garden-tool strong { font-size: 18px; }
+.garden-tool small { font-size: 10px; }
+.garden-tool.selected { background: #d4eca5; outline: 3px solid #eed17f; outline-offset: 1px; }
+.garden-tool:disabled { opacity: .5; }
+.mechanic-strip { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 12px; background: #eaf0d9; color: #344e38; font-size: 12px; }
+.mechanic-strip button { background: transparent; color: inherit; border: 0; text-decoration: underline; min-height: 32px; flex-shrink: 0; }
+.hammer-tray { display: flex; gap: 8px; flex: 1; }
+.hammer-tray button { min-height: 64px; min-width: 74px; border: 2px solid #7d9d8b; border-radius: 12px; background: #dceff0; color: #274c49; }
+.hammer-tray button:last-child { background: #f4e7b4; }
+.hammer-tray button[aria-pressed="true"] { outline: 3px solid #658545; outline-offset: 1px; }
+.hammer-tray small { display: block; font-size: 11px; margin-top: 5px; }
+.lesson-card { max-width: 480px; }
+.lesson-card p { text-align: left; line-height: 1.8; }
+.immersive .mechanic-strip { display: none; }
+.immersive main { display: flex; align-items: center; justify-content: center; min-height: 0; }
+.immersive .game-frame { height: min(calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom)), calc((100dvw - 88px) * 0.575 + 24px)); }
+.immersive .sun-counter { min-height: 32px; height: 32px; flex-basis: 32px; flex-direction: row; }
+.immersive .coin-counter { min-height: 36px; height: 36px; flex-basis: 36px; }
+.immersive .coin-counter::after { display: none; }
+.immersive .coin-icon { width: 20px; height: 20px; margin: 0; }
+.immersive .garden-tool { width: 100%; height: 44px; min-height: 44px; flex: 0 0 44px; flex-direction: row; gap: 3px; padding: 2px; font-size: 10px; }
+.immersive .garden-tool strong { font-size: 11px; }
+.immersive .garden-tool small { display: none; }
+.immersive .shovel { min-height: 44px; height: 44px; flex-basis: 44px; }
+.immersive .hammer-tray { flex-direction: column; min-height: 0; width: 100%; }
+.immersive .hammer-tray button { min-width: 0; min-height: 44px; }
+.immersive .lesson-card p { display: block; font-size: 12px; }
+@media (orientation: portrait) {
+  .immersive .game-frame { height: auto; }
+  .immersive .sun-counter { flex-basis: 48px; height: 100%; }
+  .immersive .coin-counter { flex-basis: 48px; height: 100%; }
+  .immersive .garden-tool { flex-basis: 48px; height: 100%; flex-direction: column; }
+  .immersive .hammer-tray { flex-direction: row; }
+  .immersive .weather-badge { left: 4%; font-size: 10px; padding: 3px 6px; }
+}
+@media (max-width: 700px) {
+  .garden-tool { flex-basis: 60px; min-height: 64px; font-size: 11px; }
+  .garden-tool strong { font-size: 15px; }
+  .mechanic-strip { font-size: 10px; padding: 3px 7px; }
+  .mechanic-strip button { min-height: 44px; }
+  .lesson-card { padding: 18px; }
 }

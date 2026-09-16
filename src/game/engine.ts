@@ -1,3 +1,5 @@
+import { applyControl, tickControls, consumeIce, electricTarget, conductionTargets } from "./elements";
+import { WIND_DURATION, RAIN_DURATION, TOKEN_LIFETIME, tokenPose } from "./ambient";
 import { jumpHeight } from "./animation";
 import { plantSound, type SoundEvent, type SoundKind } from "./audio";
 import { laneStrength, tiltFor, unitPrice } from "./director";
@@ -50,6 +52,10 @@ export type Zombie = {
   max: number;
   armor: number;
   slow: number;
+  iceSlow?: number;
+  iceFreeze?: number;
+  weatherSlow?: number;
+  otherFreeze?: number;
   freeze: number;
   timer: number;
   age: number;
@@ -105,6 +111,7 @@ export type Token = {
   value: number;
   age: number;
   coin: boolean;
+  origin?: "sky" | "plant" | "drop";
 };
 export type Effect = {
   uid: number;
@@ -116,12 +123,17 @@ export type Effect = {
   source?: string;
   zombie?: Zombie;
   height?: number;
+  toX?: number;
+  toRow?: number;
+  screenX?: number;
+  screenY?: number;
 };
 export type Tile = {
   row: number;
   col: number;
   type: "grave" | "crater" | "ice" | "vase";
   life: number;
+  reward?: string;
 };
 export class Engine {
   level: Level;
@@ -163,6 +175,12 @@ export class Engine {
   paused = false;
   cooldowns: Record<string, number> = {};
   selected = "";
+  toolUses = 3;
+  toolSource = 0;
+  hammer: "ice" | "electric" = "ice";
+  hammerReadyAt = 0;
+  toolsUnlocked = false;
+  reactions = 0;
   message = "选择种子，再点击草坪种植";
   messageTone: "info" | "alert" = "info";
   messageUntil = 6;
@@ -185,6 +203,7 @@ export class Engine {
     x: number;
     row: number;
     explosive: boolean;
+    element?: "ice" | "electric";
     hit: number[];
   }[] = [];
   private uid = 1;
@@ -202,6 +221,7 @@ export class Engine {
   eventAt = -1;
   eventKind: "" | "rain" | "wind" = "";
   rainUntil = 0;
+  windUntil = 0;
   private rng: number;
   private natural = 4;
   private nextSpawn = 22;
@@ -220,6 +240,7 @@ export class Engine {
     this.sun = this.settings.sun;
     this.bossHp = this.bossMax = 24000 * this.settings.health;
     this.cards = cards;
+    this.toolsUnlocked = id >= 5;
     this.rng = seed || 1;
     this.mowers = Array(this.level.rows).fill(this.settings.mowers);
     this.spareMowers = Array(this.level.rows).fill(false);
@@ -239,7 +260,9 @@ export class Engine {
       for (let r = 0; r < 6; r++)
         for (let c = 4; c < 8; c++)
           this.tiles.push({ row: r, col: c, type: "vase", life: Infinity });
-      this.say("点击罐子：里面可能藏着种子，也可能是僵尸！");
+      this.tiles.find(t => t.row === 0 && t.col === 4)!.reward = "snowpea";
+      this.tiles.find(t => t.row === 1 && t.col === 4)!.reward = "arc";
+      this.say("冰、电标记罐藏着组合种子；其余罐子可能有僵尸！");
     }
     if (this.level.mode === "whack") {
       this.nextSpawn = 2;
@@ -247,9 +270,11 @@ export class Engine {
     }
     if (this.isBelt) {
       this.sun = 0;
-      this.addBelt();
-      this.addBelt();
-      this.addBelt();
+      if (this.level.mode !== "vases") {
+        this.addBelt();
+        this.addBelt();
+        this.addBelt();
+      }
     }
     if (this.level.mode === "normal") {
       this.eventAt = this.settings.duration * (0.3 + this.random() * 0.4);
@@ -260,6 +285,132 @@ export class Engine {
     return ["conveyor", "bowling", "storm", "boss", "vases"].includes(
       this.level.mode,
     );
+  }
+  get toolName() {
+    return this.level.mode === "bowling" ? "滚球换排" : this.level.mode === "whack" ? "紧急冰冻" : "移植";
+  }
+  get toolHint() {
+    if (this.level.mode === "whack") return "点击草坪，冻结周围九宫格 3 秒";
+    if (this.level.mode === "bowling") return this.toolSource ? "点击相邻排；滚球仍会继续前进" : "点击正在滚动的球，再点击相邻排";
+    return this.toolSource ? "选择绿色空格移植；底座留在原地" : "选择主植物；连南瓜搬走，每局 3 次";
+  }
+  inBoard(row: number, col: number) {
+    return Number.isInteger(row) && Number.isInteger(col) && row >= 0 && row < this.level.rows && col >= 0 && col < 9;
+  }
+  cancelSelection() {
+    this.selected = "";
+    this.toolSource = 0;
+    this.cannon = 0;
+  }
+  selectTool() {
+    if (this.paused || this.status !== "playing" || !this.toolsUnlocked) return;
+    if (this.selected === "tool") { this.cancelSelection(); return; }
+    this.cancelSelection();
+    if (!this.toolUses) { this.say("本局工具次数已用完"); return; }
+    this.selected = "tool";
+    this.say(this.toolHint);
+  }
+  selectHammer(kind: "ice" | "electric") {
+    if (this.paused || this.status !== "playing" || this.level.mode !== "whack") return;
+    this.cancelSelection();
+    this.hammer = kind;
+  }
+  movableReason(p?: Plant) {
+    if (!p || p.hp <= 0 || p.layer !== "main") return "请选择一株存活的主植物";
+    if (p.id === "cob") return "玉米加农炮占两格，暂时不能移植";
+    if (p.chomp || ["bomb", "doom", "ice", "jalapeno", "blover", "grave", "coffee", "squash", "kelp"].includes(plantById[p.id].kind))
+      return "正在执行一次性效果或攻击动作，不能移植";
+    if (this.zombies.some(z => z.special?.kind === "smash" && z.special.target === p.uid && !z.special.hit))
+      return "植物已被重击锁定，暂时不能移植";
+    return "";
+  }
+  toolTargetReason(row: number, col: number) {
+    if (!this.toolsUnlocked) return "第 1-6 关解锁移植";
+    if (!this.toolUses) return "本局工具次数已用完";
+    if (!this.inBoard(row, col)) return "请选择草坪内的位置";
+    if (this.level.mode === "whack") return "";
+    if (this.level.mode === "bowling") {
+      const b = this.bowls.find(b => b.uid === this.toolSource);
+      if (!b || b.x < 0 || b.x >= 9) return "请选择场内正在滚动的球";
+      return Math.abs(row - b.row) === 1 ? "" : "只能移动到相邻排";
+    }
+    const p = this.plants.find(p => p.uid === this.toolSource);
+    const reason = this.movableReason(p);
+    if (reason || !p) return reason;
+    if (this.tiles.some(t => t.row === row && t.col === col)) return "这里有障碍，不能移植";
+    if (this.at(row, col, "main") || this.at(row, col, "armor")) return "目标格必须没有主植物和保护壳";
+    const base = this.at(row, col, "base");
+    if (p.id === "sea" && !this.water(row)) return "海蘑菇只能种在水上";
+    if (p.id === "cattail" && !this.water(row)) return "猫尾草只能移到水路的睡莲上";
+    if (["spike", "spikerock"].includes(p.id) && (this.water(row) || this.level.scene === "roof")) return "地刺只能移到陆地";
+    if (this.water(row) && p.id !== "sea" && (base?.id !== "lily" || base.hp <= 0)) return "水路需要先放一片睡莲";
+    if (this.level.scene === "roof" && (base?.id !== "pot" || base.hp <= 0)) return "屋顶需要先放一个花盆";
+    return "";
+  }
+  selectBowl(uid: number) {
+    if (this.paused || this.status !== "playing" || this.selected !== "tool" || !this.toolUses) return;
+    const b = this.bowls.find(b => b.uid === uid && b.x >= 0 && b.x < 9);
+    if (!b) { this.say("滚球已经离开草坪"); return; }
+    this.toolSource = uid;
+    this.say(this.toolHint);
+  }
+  useTool(row: number, col: number) {
+    if (this.paused || this.status !== "playing" || !this.toolsUnlocked || !this.toolUses) return false;
+    if (!this.inBoard(row, col)) return false;
+    if (this.level.mode !== "whack" && !this.toolSource) {
+      if (this.level.mode === "bowling") {
+        const b = this.bowls.find(b => b.row === row && Math.abs(b.x - col) < 0.6);
+        if (b) this.selectBowl(b.uid);
+        else this.say("请选择场内正在滚动的球");
+      } else {
+        const p = this.at(row, col, "main");
+        const reason = this.movableReason(p);
+        if (reason || !p) this.say(reason);
+        else { this.toolSource = p.uid; this.say(this.toolHint); }
+      }
+      return false;
+    }
+    const reason = this.toolTargetReason(row, col);
+    if (reason) { this.say(reason); return false; }
+    if (this.level.mode === "whack") {
+      for (const z of this.zombies)
+        if (electricTarget(z) && Math.abs(z.row - row) <= 1 && Math.abs(z.x - col) <= 1.5)
+          applyControl(z, "iceFreeze", 3);
+      this.effect(col, row, "ice", "emergency");
+    } else if (this.level.mode === "bowling") {
+      this.bowls.find(b => b.uid === this.toolSource)!.row = row;
+    } else {
+      const p = this.plants.find(p => p.uid === this.toolSource)!;
+      const armor = this.at(p.row, p.col, "armor");
+      this.effect(p.col, p.row, "shovel");
+      for (const part of armor ? [p, armor] : [p]) { part.row = row; part.col = col; }
+      this.effect(col, row, "plant", p.id);
+    }
+    this.toolUses--;
+    this.cancelSelection();
+    this.say(`${this.toolName}成功，剩余 ${this.toolUses} 次`);
+    return true;
+  }
+  arcEffect(x: number, row: number, toX: number, toRow: number, reaction: boolean) {
+    this.effect(x, row, reaction ? "conduction" : "electric");
+    const fx = this.effects.at(-1)!;
+    fx.toX = toX;
+    fx.toRow = toRow;
+  }
+  electricHit(z: Zombie, baseDamage: number) {
+    if (!electricTarget(z)) return;
+    // Capture the reaction before base damage can kill the primary target.
+    const reaction = consumeIce(z);
+    const targets = reaction ? conductionTargets(z, this.zombies) : [];
+    this.damage(z, baseDamage + (reaction ? 100 : 0));
+    this.sound(reaction ? "conduction" : "electric", z.x);
+    if (!reaction) return;
+    this.reactions++;
+    this.effect(z.x, z.row, "iceBreak");
+    for (const other of targets) {
+      this.arcEffect(z.x, z.row, other.x, other.row, true);
+      this.damage(other, 80);
+    }
   }
   random() {
     this.rng = (Math.imul(1664525, this.rng) + 1013904223) >>> 0;
@@ -323,7 +474,8 @@ export class Engine {
       jump: "jump",
       shovel: "shovel",
     };
-    if (sound[type]) this.sound(sound[type]!, x, source);
+    if (type === "collect" && source === "coin") this.sound("coin", x, source);
+    else if (sound[type]) this.sound(sound[type]!, x, source);
     if (type === "boom") this.hitStop = Math.max(this.hitStop, 0.06);
     else if (type === "smash") this.hitStop = Math.max(this.hitStop, 0.05);
     this.effects.push({
@@ -449,6 +601,7 @@ export class Engine {
         x: col,
         row,
         explosive: d.id === "cherry",
+        element: d.id === "snowpea" ? "ice" : d.id === "arc" ? "electric" : undefined,
         hit: [],
       });
       return true;
@@ -510,15 +663,20 @@ export class Engine {
     if (!t) return;
     if (t.coin) this.coins += t.value;
     else this.sun += t.value;
-    this.effect(t.x, t.row, "collect");
-    this.effect(t.x, t.row, "fly", t.coin ? "coin" : "sun");
+    const pose = tokenPose(t, this.level.rows);
+    for (const type of ["collect", "fly"]) {
+      this.effect(t.x, t.row, type, t.coin ? "coin" : "sun");
+      const fx = this.effects.at(-1)!;
+      fx.screenX = pose.x;
+      fx.screenY = pose.y;
+    }
     this.tokens = this.tokens.filter((t) => t.uid !== uid);
   }
-  token(x: number, row: number, value = 25, coin = false) {
-    this.tokens.push({ uid: this.uid++, x, row, value, coin, age: 0 });
+  token(x: number, row: number, value = 25, coin = false, origin: Token["origin"] = coin ? "drop" : "plant") {
+    this.tokens.push({ uid: this.uid++, x, row, value, coin, age: 0, origin });
   }
   addBelt() {
-    if (this.conveyor.length >= 9) return;
+    if (this.conveyor.length >= 9 || this.level.mode === "vases") return;
     let pool = this.cards.filter(
       (id) =>
         ![
@@ -532,9 +690,10 @@ export class Engine {
           "grave",
         ].includes(id),
     );
-    if (this.level.mode === "bowling") pool = ["wallnut", "wallnut", "cherry"];
+    pool = [...new Set([...pool, "snowpea", "arc"])];
+    if (this.level.mode === "bowling") pool = ["wallnut", "wallnut", "cherry", "snowpea", "arc"];
     if (this.level.mode === "boss")
-      pool = ["cabbage", "kernel", "melon", "ice", "jalapeno", "pot"];
+      pool = ["cabbage", "kernel", "melon", "ice", "jalapeno", "pot", "snowpea", "arc"];
     if (this.level.scene === "roof" && this.random() < 0.3) pool = ["pot"];
     if (this.water(2) && this.random() < 0.25) pool = ["lily"];
     this.conveyor.push(pool[Math.floor(this.random() * pool.length)] || "pea");
@@ -724,6 +883,8 @@ export class Engine {
       ally: false,
       thrown: false,
     });
+    if (this.windUntil > this.time)
+      applyControl(this.zombies.at(-1)!, "weatherSlow", this.windUntil - this.time);
     this.livingCache = null;
   }
   damage(z: Zombie, amount: number, pierce = false) {
@@ -764,6 +925,8 @@ export class Engine {
       this.bossHp -= damage * 0.35;
   }
   click(row: number, col: number, keep = false) {
+    if (this.paused || this.status !== "playing" || !this.inBoard(row, col)) return;
+    if (this.selected === "tool") { this.useTool(row, col); return; }
     if (this.paused || this.status !== "playing") return;
     if (this.cannon) {
       const p = this.plants.find((p) => p.uid === this.cannon);
@@ -785,7 +948,8 @@ export class Engine {
     if (vase) {
       this.tiles = this.tiles.filter((t) => t !== vase);
       this.effect(col, row, "plant");
-      if (this.random() < 0.4)
+      if (vase.reward) this.conveyor.push(vase.reward);
+      else if (this.random() < 0.4)
         this.spawn(this.random() < 0.2 ? "bucket" : "basic", row, col);
       else
         this.conveyor.push(
@@ -808,7 +972,13 @@ export class Engine {
     if (this.level.mode !== "whack" || this.paused || this.status !== "playing")
       return;
     const z = this.zombies.find((z) => z.uid === uid);
-    if (z) this.damage(z, 200, true);
+    if (!z || !electricTarget(z) || this.time + 1e-9 < this.hammerReadyAt) return;
+    this.hammerReadyAt = this.time + 0.4;
+    if (this.hammer === "ice") {
+      this.damage(z, 20);
+      applyControl(z, "iceFreeze", 3);
+      this.effect(z.x, z.row, "ice", "hammer");
+    } else this.electricHit(z, 120);
   }
   shoot(p: Plant, z: Zombie, damage: number, type = p.id) {
     const original = this.plants.find((q) => q.uid === p.uid);
@@ -854,7 +1024,7 @@ export class Engine {
     if (this.eventAt > 0 && this.time >= this.eventAt) {
       this.eventAt = -1;
       if (this.eventKind === "rain") {
-        this.rainUntil = this.time + 10;
+        this.rainUntil = this.time + RAIN_DURATION;
         for (const p of this.plants)
           if (plantById[p.id].kind === "sun")
             this.token(
@@ -865,8 +1035,9 @@ export class Engine {
         this.say("阳光雨！向日葵立刻产出，阳光掉落加速");
         this.sound("sun");
       } else {
-        for (const z of this.zombies) z.slow = Math.max(z.slow, 5);
-        this.say("寒风过境！僵尸们被冻得行动迟缓");
+        this.windUntil = this.time + WIND_DURATION;
+        for (const z of this.zombies) applyControl(z, "weatherSlow", WIND_DURATION);
+        this.say("寒风过境！冰霜凝结，僵尸们被冻得行动迟缓");
         this.sound("frost");
       }
     }
@@ -879,7 +1050,7 @@ export class Engine {
     this.effects.forEach((e) => (e.life -= dt));
     this.effects = this.effects.filter((e) => e.life > 0);
     this.tokens.forEach((t) => (t.age += dt));
-    this.tokens = this.tokens.filter((t) => t.age < 16);
+    this.tokens = this.tokens.filter((t) => t.age < TOKEN_LIFETIME);
     this.tiles.forEach((t) => (t.life -= dt));
     this.tiles = this.tiles.filter((t) => t.life > 0);
     if (!this.isBelt && !isNight(this.level.scene)) {
@@ -888,6 +1059,7 @@ export class Engine {
         this.token(
           0.4 + this.random() * 7.8,
           this.random() * (this.level.rows - 1),
+          25, false, "sky",
         );
         this.natural = this.time < this.rainUntil ? 3 : 6;
       }
@@ -955,7 +1127,7 @@ export class Engine {
     }
     if (this.iceStart && this.spawned > 0) {
       this.iceStart = false;
-      for (const z of this.zombies) z.freeze = Math.max(z.freeze, 4);
+      for (const z of this.zombies) applyControl(z, "iceFreeze", 4);
       this.sound("freeze");
     }
     if (this.level.mode === "boss") this.updateBoss(dt);
@@ -1009,8 +1181,8 @@ export class Engine {
         }
         if (d.kind === "ice") {
           for (const z of targets) {
-            z.freeze = 4;
-            z.slow = 15;
+            applyControl(z, "iceFreeze", 4);
+            applyControl(z, "iceSlow", 15);
           }
           this.effect(p.col, p.row, "ice", p.id);
           if (this.bossBall?.type === "fire") this.bossBall = null;
@@ -1118,6 +1290,15 @@ export class Engine {
         }
       }
       if (d.kind === "cannon" && p.timer <= 0) p.ready = true;
+      if (d.kind === "electric" && p.timer <= 0) {
+        const target = ahead.find(z => electricTarget(z) && z.x >= p.col);
+        if (target) {
+          p.attackAge = 0;
+          p.timer = d.interval!;
+          this.arcEffect(p.col, p.row, target.x, target.row, false);
+          this.electricHit(target, d.damage!);
+        }
+      }
       if (
         p.timer <= 0 &&
         [
@@ -1266,8 +1447,8 @@ export class Engine {
           z.id === "screen" &&
             ["cabbage", "kernel", "melon", "winter"].includes(s.type),
         );
-        if (["snowpea", "winter"].includes(s.type)) z.slow = 10;
-        if (s.type === "kernel" && this.random() < 0.25) z.freeze = 3;
+        if (["snowpea", "winter"].includes(s.type)) applyControl(z, "iceSlow", 10);
+        if (s.type === "kernel" && this.random() < 0.25) applyControl(z, "otherFreeze", 3);
         if (s.type === "cactus" || s.type === "cattail") z.flying = false;
         if (["melon", "winter", "fire"].includes(s.type))
           for (const other of this.zombies)
@@ -1278,7 +1459,7 @@ export class Engine {
               Math.abs(other.row - z.row) <= 1
             ) {
               this.damage(other, s.damage / 3);
-              if (s.type === "winter") other.slow = 10;
+              if (s.type === "winter") applyControl(other, "iceSlow", 10);
             }
       }
     }
@@ -1289,6 +1470,7 @@ export class Engine {
         (z) =>
           !z.ally &&
           z.hp > 0 &&
+          (!b.element || electricTarget(z)) &&
           z.row === b.row &&
           Math.abs(z.x - b.x) < 0.35 &&
           !b.hit.includes(z.uid),
@@ -1299,7 +1481,12 @@ export class Engine {
           this.blast(b.x, b.row, 1.5);
           b.x = 12;
         } else {
-          this.damage(z, 550);
+          if (b.element === "ice") {
+            this.damage(z, 20);
+            applyControl(z, "iceSlow", 5);
+            this.effect(z.x, z.row, "ice", "bowl");
+          } else if (b.element === "electric") this.electricHit(z, 100);
+          else this.damage(z, 550);
           const rows = [b.row - 1, b.row + 1].filter(
             (r) => r >= 0 && r < this.level.rows,
           );
@@ -1309,7 +1496,12 @@ export class Engine {
     }
     this.bowls = this.bowls.filter((b) => b.x < 10.5);
 
-    for (const z of [...this.zombies]) this.updateZombie(z, dt);
+    for (const z of [...this.zombies]) {
+      // The same deadline governs the weather visual and every current/new unit.
+      if (this.windUntil > this.time)
+        applyControl(z, "weatherSlow", this.windUntil - this.time + dt);
+      this.updateZombie(z, dt);
+    }
     const dead = this.zombies.filter((z) => z.hp <= 0);
     this.kills += dead.filter((z) => !z.ally).length;
     for (const z of dead) {
@@ -1319,9 +1511,9 @@ export class Engine {
         fx.zombie = { ...z };
         fx.height = jumpHeight(z);
       }
-      if (this.random() < 0.1) this.token(z.x, z.row, 10, true);
+      if (this.random() < 0.04) this.token(z.x, z.row, 5, true);
       if (z.golden)
-        this.token(z.x, z.row, 100 + Math.floor(this.random() * 101), true);
+        this.token(z.x, z.row, 100 + Math.floor(this.random() * 51), true);
     }
     const killsNow = dead.filter((z) => !z.ally);
     if (killsNow.length) {
@@ -1371,11 +1563,9 @@ export class Engine {
     if (z.hp <= 0) return;
     const d = zombieById[z.id];
     const slowed = z.slow > 0, clock = dt * (slowed ? 0.5 : 1);
-    z.slow = Math.max(0, z.slow - dt);
-    if (z.freeze > 0) {
-      z.freeze = Math.max(0, z.freeze - dt);
-      return;
-    }
+    const frozen = z.freeze > 0;
+    tickControls(z, dt);
+    if (frozen) return;
     z.hurt = Math.max(0, (z.hurt || 0) - dt);
     if (z.laneChange) {
       z.laneChange.elapsed += dt;
@@ -1511,7 +1701,7 @@ export class Engine {
     if (z.underground && z.x < 0.1) {
       z.underground = false;
       z.reverse = true;
-      z.freeze = 2;
+      applyControl(z, "otherFreeze", 2);
     }
     if (z.id === "yeti" && z.age > 15) z.reverse = true;
     const opponent = this.zombies.find(

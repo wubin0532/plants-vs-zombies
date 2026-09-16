@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { plants, zombies, plantById } from "./content";
-import { plantImage, zombieImage, gardenImage, effectImage } from "./art";
+import { plantImage, zombieImage, gardenImage, effectImage, bowlImage } from "./art";
 import { BOARD, cellX, cellY, feetY, cellAt, healthFraction } from "./layout";
 import {
   bakeZombie,
@@ -16,12 +16,15 @@ import {
 } from "./animation";
 import { plantScale, zombieScale } from "./proportions";
 import { bakeMower } from "./mower";
+import { tokenPose, weatherOpacity, WIND_DURATION } from "./ambient";
+import { drawWeather, drawToken } from "./ambient-render";
 import type { GardenAudio } from "./audio";
 export type RenderOptions = {
   audio?: GardenAudio;
   quality?: () => string;
   shake?: () => boolean;
   contrast?: () => boolean;
+  pickupTarget?: (coin: boolean) => { x: number; y: number } | undefined;
 };
 import { Engine } from "./engine";
 
@@ -32,6 +35,7 @@ export class GardenScene extends Phaser.Scene {
     Phaser.GameObjects.Image | Phaser.GameObjects.Text
   >();
   graphics!: Phaser.GameObjects.Graphics;
+  weather!: Phaser.GameObjects.Graphics;
   fog!: Phaser.GameObjects.Graphics;
   terrain!: Phaser.GameObjects.Graphics;
   terrainCache!: Phaser.GameObjects.RenderTexture;
@@ -69,6 +73,7 @@ export class GardenScene extends Phaser.Scene {
       { frameWidth: 256, frameHeight: 256 },
     );
     for (const p of plants) this.load.image(p.id, plantImage(p.id));
+    for (const element of ["ice", "electric"] as const) this.load.image("b-" + element, bowlImage(element));
     for (const z of zombies) this.load.image("z-" + z.id, zombieImage(z.id));
     for (let i = 0; i < 16; i++) this.load.image("fx-" + i, effectImage(i));
   }
@@ -116,6 +121,7 @@ export class GardenScene extends Phaser.Scene {
         BOARD.top + BOARD.lawnHeight,
       );
     this.graphics = this.add.graphics().setDepth(80);
+    this.weather = this.add.graphics().setDepth(100.5);
     this.terrain = this.add.graphics().setVisible(false);
     this.fog = this.add.graphics().setVisible(false);
     this.terrainCache = this.add.renderTexture(0, 0, 1200, 690).setDepth(79);
@@ -139,41 +145,35 @@ export class GardenScene extends Phaser.Scene {
       .setDisplaySize(86, 86)
       .setVisible(false)
       .setDepth(100);
-    this.input.on("pointermove", (p: Phaser.Input.Pointer) => {
-      const { col: c, row: r } = cellAt(p.x, p.y, this.engine.level.rows);
-      const inLawn =
-        c >= 0 && c < 9 && r >= 0 && r < this.engine.level.rows;
-      const id = this.engine.selected;
-      this.hover.setVisible(inLawn && !!id);
-      this.hover.setPosition(this.x(c), this.y(r));
-      if (inLawn && id && id !== "shovel" && plantById[id]) {
-        this.ghost
-          .setTexture(id === "chomper" ? "chomper-motion" : id)
-          .setPosition(this.x(c), feetY(r, this.engine.level.rows))
-          .setVisible(true);
-        if (id === "chomper") this.ghost.setFrame(0);
-        if (this.engine.canPlant(id, r, c)) this.ghost.clearTint();
-        else this.ghost.setTint(0xe05545);
-      } else this.ghost.setVisible(false);
-    });
+    this.input.on("pointermove", (p: Phaser.Input.Pointer) => this.preview(p));
     this.input.mouse?.disableContextMenu();
     this.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
       if (p.rightButtonDown()) {
-        this.engine.selected = "";
-        this.engine.cannon = 0;
+        this.engine.cancelSelection();
         this.hover.setVisible(false);
         this.ghost.setVisible(false);
         this.notify();
         return;
       }
       if (this.engine.paused) return;
-      const token = this.engine.tokens.find(
-        (t) =>
-          Phaser.Math.Distance.Between(this.x(t.x), this.y(t.row), p.x, p.y) <
-          31,
-      );
+      const token = this.engine.tokens.find(t => {
+        const pose = tokenPose(t, this.engine.level.rows);
+        return Phaser.Math.Distance.Between(pose.x, pose.y, p.x, p.y) < 31;
+      });
       if (token) {
         this.engine.collect(token.uid);
+        this.notify();
+        return;
+      }
+      if (this.engine.selected === "tool") {
+        if (this.engine.level.mode === "bowling" && !this.engine.toolSource) {
+          const b = this.engine.bowls.find(b => Phaser.Math.Distance.Between(this.x(b.x), this.y(b.row), p.x, p.y) < 48);
+          if (b) this.engine.selectBowl(b.uid);
+        } else {
+          const { row, col } = cellAt(p.x, p.y, this.engine.level.rows);
+          this.engine.useTool(row, col);
+        }
+        this.preview(p);
         this.notify();
         return;
       }
@@ -185,12 +185,31 @@ export class GardenScene extends Phaser.Scene {
         );
         if (zombie) {
           this.engine.hitZombie(zombie.uid);
+          this.notify();
           return;
         }
       }
       const { row, col } = cellAt(p.x, p.y, this.engine.level.rows);
       this.engine.click(row, col, (p.event as MouseEvent).shiftKey);
     });
+  }
+  preview(pointer: Phaser.Input.Pointer) {
+    const e = this.engine;
+    const { col, row } = cellAt(pointer.x, pointer.y, e.level.rows);
+    const active = e.inBoard(row, col) && !!e.selected && !e.paused && e.status === "playing";
+    this.hover.setVisible(active).setPosition(this.x(col), this.y(row));
+    const moving = e.selected === "tool" && e.level.mode !== "bowling" && e.level.mode !== "whack";
+    const plant = moving ? e.plants.find(p => p.uid === e.toolSource) : undefined;
+    const id = moving ? plant?.id : e.selected;
+    const reason = e.selected === "tool" ? e.toolTargetReason(row, col) : id ? e.canPlant(id, row, col) : "";
+    this.hover.setStrokeStyle(2, reason ? 0xe05545 : 0xb9ed78, 0.9);
+    this.ghost.setVisible(false);
+    if (active && id && plantById[id]) {
+      this.ghost.setTexture(id === "chomper" ? "chomper-motion" : id)
+        .setPosition(this.x(col), feetY(row, e.level.rows)).setVisible(true);
+      if (id === "chomper") this.ghost.setFrame(0);
+      if (reason) this.ghost.setTint(0xe05545); else this.ghost.clearTint();
+    }
   }
   sprite(
     key: string,
@@ -256,7 +275,7 @@ export class GardenScene extends Phaser.Scene {
     if (!e.paused && e.status === "playing")
       this.options.audio?.update(this.realTime, e.zombies.length / 18);
     this.wasPaused = e.paused || e.status !== "playing";
-    if (this.ghost.visible && !e.selected) this.ghost.setVisible(false);
+    this.preview(this.input.activePointer);
     if (_time - this.lastNotify > 80) {
       this.notify();
       this.lastNotify = _time;
@@ -266,6 +285,8 @@ export class GardenScene extends Phaser.Scene {
     keep.clear();
     const g = this.graphics;
     g.clear();
+    const cold = weatherOpacity(e.time, e.windUntil, WIND_DURATION);
+    drawWeather(this.weather, e.time, e.windUntil, e.rainUntil, this.options.quality?.() || "high");
     const terrainKey = e.tiles.map(t => `${t.type}:${t.row}:${t.col}`).join("|");
     if (terrainKey !== this.terrainKey) {
       this.terrainKey = terrainKey;
@@ -296,6 +317,30 @@ export class GardenScene extends Phaser.Scene {
       }
       this.terrainCache.clear().draw(g);
     }
+    for (const tile of e.tiles) {
+      if (!tile.reward) continue;
+      const key = `reward-${tile.row}-${tile.col}`;
+      keep.add(key);
+      this.sprite(key, tile.reward, this.x(tile.col), this.y(tile.row) - 6, 32, 32, 80);
+    }
+    if (e.selected === "tool") {
+      const source = e.plants.find(p => p.uid === e.toolSource);
+      const bowl = e.bowls.find(b => b.uid === e.toolSource);
+      for (let row = 0; row < e.level.rows; row++) for (let col = 0; col < 9; col++) {
+        const valid = e.toolSource || e.level.mode === "whack" ? !e.toolTargetReason(row, col) :
+          e.level.mode !== "bowling" && !e.movableReason(e.at(row, col, "main"));
+        if (valid) {
+          g.fillStyle(0xafe276, 0.10);
+          g.fillRect(this.x(col) - 44, this.y(row) - 37, 88, 74);
+          g.lineStyle(1, 0xd5f2aa, 0.6);
+          g.strokeRect(this.x(col) - 43, this.y(row) - 36, 86, 72);
+        }
+      }
+      if (source || bowl) {
+        g.lineStyle(4, 0xffe293, 1);
+        g.strokeCircle(this.x(source ? source.col : bowl!.x), this.y(source ? source.row : bowl!.row), 37);
+      }
+    }
     for (const p of e.plants) {
       const key = "p" + p.uid;
       keep.add(key);
@@ -318,7 +363,7 @@ export class GardenScene extends Phaser.Scene {
         attackTime < 0.32 ? Math.sin((attackTime / 0.32) * Math.PI) : 0;
       const anticipation =
         !p.sleep &&
-        ["shooter", "lob", "homing", "shroom"].includes(plantById[p.id].kind) &&
+        ["shooter", "lob", "homing", "shroom", "electric"].includes(plantById[p.id].kind) &&
         p.timer > 0 &&
         p.timer < 0.18
           ? Math.sin((1 - p.timer / 0.18) * Math.PI) * 0.035
@@ -346,6 +391,14 @@ export class GardenScene extends Phaser.Scene {
       obj.setAngle(
         stable ? 0 : Math.sin(e.time * 2 + p.uid) * 0.7 - recoil * 2,
       );
+      if (cold && !base) {
+        const frost = cold * (0.18 + Math.sin(e.time * 5 + p.uid) * 0.06);
+        g.lineStyle(2, 0xe4fbff, frost);
+        g.strokeCircle(obj.x, obj.y - 43 * bodyScale, 38 * bodyScale);
+        g.fillStyle(0xe4fbff, cold * 0.16);
+        g.fillCircle(obj.x - 22 * bodyScale, obj.y - 66 * bodyScale, 3);
+        g.fillCircle(obj.x + 23 * bodyScale, obj.y - 35 * bodyScale, 2);
+      }
       if (articulatedPlants.has(p.id)) {
         const texture = this.textures.get(p.id);
         if (!texture.has("roots")) {
@@ -480,45 +533,30 @@ export class GardenScene extends Phaser.Scene {
             3,
           );
         }
-        if (z.freeze > 0) {
-          g.lineStyle(2, 0xd5f6ff, 0.8);
+        if (z.freeze > 0 || ((z.weatherSlow ?? 0) > 0 && cold > 0)) {
+          g.lineStyle(2, 0xd5f6ff, z.freeze > 0 ? 0.8 : cold * 0.4);
           g.strokeEllipse(
             this.x(z.x),
             foot - 28 * scale,
             62 * scale,
             59 * scale,
           );
+          if ((z.weatherSlow ?? 0) > 0 && cold && z.freeze <= 0) {
+            const pulse = cold * (0.5 + Math.sin(e.time * 4 + z.uid) * 0.18);
+            g.lineStyle(2, 0xc4eff5, pulse);
+            g.lineBetween(this.x(z.x) - 28 * scale, foot - 47 * scale, this.x(z.x) - 14 * scale, foot - 59 * scale);
+            g.lineBetween(this.x(z.x) + 25 * scale, foot - 19 * scale, this.x(z.x) + 37 * scale, foot - 32 * scale);
+          }
         }
       }
     }
-    for (const t of e.tokens) {
-      const x = this.x(t.x),
-        y = this.y(t.row) + Math.sin(e.time * 3 + t.uid) * 3;
-      g.fillStyle(t.coin ? 0xebc064 : 0xffd75c, 0.22);
-      g.fillCircle(x, y, 29);
-      g.fillStyle(t.coin ? 0xdba641 : 0xffe28a);
-      g.fillCircle(x, y, t.coin ? 14 : 20);
-      g.lineStyle(3, t.coin ? 0xffe1a0 : 0xf9bb44);
-      g.strokeCircle(x, y, t.coin ? 12 : 18);
-      if (!t.coin) {
-        g.lineStyle(3, 0xffd75c);
-        for (let i = 0; i < 8; i++) {
-          const a = (i * Math.PI) / 4 + e.time * 0.2;
-          g.lineBetween(
-            x + Math.cos(a) * 23,
-            y + Math.sin(a) * 23,
-            x + Math.cos(a) * 28,
-            y + Math.sin(a) * 28,
-          );
-        }
-      }
-    }
+    for (const token of e.tokens) drawToken(g, token, e.level.rows, e.time, cold);
     for (const b of e.bowls) {
       const key = "b" + b.uid;
       keep.add(key);
       this.sprite(
         key,
-        b.explosive ? "cherry" : "wallnut",
+        b.element ? "b-" + b.element : b.explosive ? "cherry" : "wallnut",
         this.x(b.x),
         this.y(b.row),
         75,
@@ -557,13 +595,37 @@ export class GardenScene extends Phaser.Scene {
       const fx = e.effects[fxIndex];
       if (fx.type === "mower") continue;
       const t = 1 - fx.life / fx.duration,
-        x = this.x(fx.x),
-        y = this.y(fx.row),
+        x = fx.screenX ?? this.x(fx.x),
+        y = fx.screenY ?? this.y(fx.row),
         key = "fx" + fx.uid;
       let frame = 15,
         size = 35,
         alpha = 1 - t;
-      if (fx.type === "boom") {
+      if (fx.type === "electric" || fx.type === "conduction") {
+        const tx = this.x(fx.toX ?? fx.x), ty = this.y(fx.toRow ?? fx.row);
+        const strong = fx.type === "conduction";
+        g.lineStyle(strong ? 5 : 2, strong ? 0x84ecff : 0xffe590, (strong ? 1 : 0.65) * alpha);
+        g.beginPath(); g.moveTo(x, y - 22);
+        for (let i = 1; i <= 6; i++) {
+          const fraction = i / 6;
+          g.lineTo(x + (tx - x) * fraction, y - 22 + (ty - y) * fraction + (i === 6 ? 0 : (i % 2 ? 9 : -9)));
+        }
+        g.strokePath();
+        continue;
+      } else if (fx.type === "iceBreak") {
+        for (let i = 0; i < 8; i++) {
+          const angle = i * Math.PI / 4;
+          const radius = 15 + t * 55;
+          const px = x + Math.cos(angle) * radius, py = y - 22 + Math.sin(angle) * radius;
+          g.fillStyle(0xc4f7ff, alpha);
+          g.fillTriangle(px, py - 7, px - 4, py + 4, px + 5, py + 2);
+        }
+        keep.add(key);
+        let label = this.objects.get(key) as Phaser.GameObjects.Text;
+        if (!label) { label = this.add.text(x, y - 65, "冰电爆发", { fontSize: "18px", color: "#eaffff", stroke: "#26556c", strokeThickness: 4 }).setOrigin(0.5).setDepth(102); this.objects.set(key, label); }
+        label.setPosition(x, y - 65 - t * 18).setAlpha(alpha);
+        continue;
+      } else if (fx.type === "boom") {
         frame = (fx.source === "doom" ? 4 : 0) + Math.min(3, Math.floor(t * 4));
         if (fx.source === "potato") frame = 10;
         if (fx.source === "cob") frame = Math.min(3, 1 + Math.floor(t * 3));
@@ -635,14 +697,25 @@ export class GardenScene extends Phaser.Scene {
       } else if (fx.type === "sun" || fx.type === "collect") {
         frame = 13;
         size = 60;
+        if (fx.type === "collect" && fx.source === "coin") {
+          g.lineStyle(2, 0xffe39a, alpha);
+          g.strokeCircle(x, y, 12 + t * 25);
+          for (let i = 0; i < 4; i++) {
+            const a = i * Math.PI / 2 + Math.PI / 4;
+            g.fillStyle(0xffe7a4, alpha);
+            g.fillCircle(x + Math.cos(a) * t * 30, y + Math.sin(a) * t * 30, 2);
+          }
+          continue;
+        }
       } else if (fx.type === "spore") {
         frame = 9;
         size = 170;
       } else if (fx.type === "fly") {
         // Sun/coin icon accelerating toward the seed-tray corner.
         const ease = t * t;
-        const flyX = x + (60 - x) * ease,
-          flyY = y + (14 - y) * ease - Math.sin(Math.PI * t) * 46;
+        const target = this.options.pickupTarget?.(fx.source === "coin") ?? { x: fx.source === "coin" ? 145 : 60, y: 0 };
+        const flyX = x + (target.x - x) * ease,
+          flyY = y + (target.y - y) * ease - Math.sin(Math.PI * t) * 46;
         g.fillStyle(fx.source === "coin" ? 0xe8b04b : 0xffd94d, 1 - t * 0.4);
         g.fillCircle(flyX, flyY, 12);
         if (fx.source === "coin") {
