@@ -271,7 +271,10 @@ export class GardenScene extends Phaser.Scene {
       // complete portrait instead of inheriting a clipped previous frame.
       this.ghost
         .setTexture(id === "chomper" ? "chomper-motion" : id)
-        .setFrame(0)
+        // Plant rendering adds named `roots` / `head` frames to the portrait
+        // texture.  Numeric frame 0 is not the full-image frame once those
+        // regions exist; explicitly select Phaser's immutable base frame.
+        .setFrame("__BASE")
         .setCrop()
         .setOrigin(0.5, id === "chomper" ? 249 / 256 : 0.95)
         .setDisplaySize(86 * plantScale(id), 86 * plantScale(id))
