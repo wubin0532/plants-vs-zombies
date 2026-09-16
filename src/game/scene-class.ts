@@ -224,6 +224,9 @@ export class GardenScene extends Phaser.Scene {
     });
     // 从顶部卡片直接拖到草坪：抬手时在落点种植（点选种植在 pointerdown 已处理）。
     this.input.on("pointerup", (p: Phaser.Input.Pointer) => {
+      // Always clear the transient preview first.  A cancelled/invalid drag
+      // must not leave the previous plant half-rendered for the next drag.
+      this.resetGhost();
       // 按下发生在画布内说明是普通点选，pointerdown 已经种过了。
       if (p.downElement === this.game.canvas) return;
       const id = this.engine.selected;
@@ -233,9 +236,13 @@ export class GardenScene extends Phaser.Scene {
       if (col < 0 || col > 8 || row < 0 || row >= this.engine.level.rows)
         return;
       this.engine.click(row, col);
-      this.ghost.setVisible(false);
       this.notify();
     });
+    this.input.on("pointercancel", () => this.resetGhost());
+  }
+  resetGhost() {
+    this.ghost.setVisible(false).clearTint().setAlpha(0.82).setScale(1);
+    this.lightPreview.clear();
   }
   preview(pointer: Phaser.Input.Pointer) {
     const e = this.engine;
@@ -247,7 +254,7 @@ export class GardenScene extends Phaser.Scene {
     const id = moving ? plant?.id : e.selected;
     const reason = e.selected === "tool" ? e.toolTargetReason(row, col) : id ? e.canPlant(id, row, col) : "";
     this.hover.setStrokeStyle(2, reason ? 0xe05545 : 0xb9ed78, 0.9);
-    this.ghost.setVisible(false);
+    this.resetGhost();
     this.lightPreview.clear();
     if (active && id === "lantern") {
       const left = Math.max(0, col - 2), right = Math.min(8, col + 2);
@@ -259,9 +266,18 @@ export class GardenScene extends Phaser.Scene {
       this.lightPreview.strokeRect(BOARD.left + left * BOARD.cell, BOARD.top + top * h, (right - left + 1) * BOARD.cell, (bottom - top + 1) * h);
     }
     if (active && id && plantById[id]) {
-      this.ghost.setTexture(id === "chomper" ? "chomper-motion" : id)
-        .setPosition(this.x(col), feetY(row, e.level.rows)).setVisible(true);
-      if (id === "chomper") this.ghost.setFrame(0);
+      // setTexture does not reset all display state on every Phaser version.
+      // Reset frame/crop/scale explicitly so the second selected card gets the
+      // complete portrait instead of inheriting a clipped previous frame.
+      this.ghost
+        .setTexture(id === "chomper" ? "chomper-motion" : id)
+        .setFrame(0)
+        .setCrop()
+        .setOrigin(0.5, id === "chomper" ? 249 / 256 : 0.95)
+        .setDisplaySize(86 * plantScale(id), 86 * plantScale(id))
+        .setAlpha(0.82)
+        .setPosition(this.x(col), feetY(row, e.level.rows))
+        .setVisible(true);
       if (reason) this.ghost.setTint(0xe05545); else this.ghost.clearTint();
     }
   }
