@@ -37,7 +37,7 @@ const p = (
 });
 export const plants: PlantDef[] = [
   p("arc", "电弧花", 225, "electric", 8, "#77dfed",
-    "每 2 秒电击前方单体，伤害 20。消耗目标冰系控制，追加 100 伤害，并向附近至多 3 个敌人各传导 80 伤害。", { damage: 20, interval: 2 }),
+    "每 2 秒电击前方单体，伤害 20。命中冰系目标时消耗其冰控（同一目标 4 秒内仅触发一次），追加 100 伤害，并向附近至多 3 个敌人各传导 40 伤害。", { damage: 20, interval: 2 }),
   p(
     "pea",
     "豌豆射手",
@@ -151,7 +151,7 @@ export const plants: PlantDef[] = [
     "墓碑吞噬者",
     75,
     "grave",
-    14,
+    12,
     "#897e9b",
     "移除一块墓碑，腾出种植空间。",
   ),
@@ -675,6 +675,57 @@ export const levels: Level[] = Array.from({ length: 50 }, (_, i) => {
   };
 });
 export const isNight = (scene: string) => scene === "night" || scene === "fog";
+
+/** 选卡推荐：克制优先 → 场景必需 → 经济植物 → 新解锁与填充补位。 */
+export function recommendCards(
+  level: Level,
+  unlocked: string[],
+  slots: number,
+): string[] {
+  const has = (id: string) => unlocked.includes(id);
+  const picked: string[] = [];
+  const push = (...ids: string[]) => {
+    for (const id of ids)
+      if (has(id) && !picked.includes(id) && !plantById[id]?.upgrade)
+        picked.push(id);
+  };
+  const night = isNight(level.scene);
+  // 1. 克制本关敌人的植物
+  for (const enemy of level.enemies)
+    push(...(zombieById[enemy]?.counters ?? []));
+  // 2. 场景必需
+  if (level.rows === 6) push("lily");
+  if (level.scene === "fog") push("lantern", "blover");
+  if (night) push("grave");
+  if (level.scene === "roof") push("pot", "umbrella");
+  // 3. 经济植物：夜晚优先阳光菇，未解锁时退回向日葵
+  if (night) push(has("sunshroom") ? "sunshroom" : "sunflower");
+  else push("sunflower");
+  // 4. 本关新解锁的植物
+  for (const plant of plants) if (plant.unlock === level.id) push(plant.id);
+  // 5. 按场景填充剩余槽位
+  push(
+    ...(level.scene === "night"
+      ? ["puff", "fume", "wallnut", "scaredy", "hypno", "ice", "doom"]
+      : level.scene === "pool"
+        ? ["pea", "wallnut", "kelp", "squash", "snowpea", "cherry", "three"]
+        : level.scene === "fog"
+          ? ["puff", "fume", "sea", "wallnut", "cactus", "star"]
+          : level.scene === "roof"
+            ? ["cabbage", "kernel", "wallnut", "cherry", "melon", "jalapeno"]
+            : [
+                "pea",
+                "wallnut",
+                "potato",
+                "snowpea",
+                "cherry",
+                "repeater",
+                "chomper",
+                "arc",
+              ]),
+  );
+  return picked.slice(0, Math.max(1, slots));
+}
 export const isMushroom = (id: string) =>
   [
     "puff",

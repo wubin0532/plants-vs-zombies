@@ -1407,6 +1407,9 @@ body.font-large .in-game .modal {
   border-radius: 3px;
   padding: 1px 4px;
 }
+.seed-card .badge.warn {
+  background: #7c6f9e;
+}
 .level-grid .current {
   border-color: #8da564;
   box-shadow: 0 0 0 1px #8da564;

@@ -66,6 +66,8 @@ export type Zombie = {
   slow: number;
   iceSlow?: number;
   iceFreeze?: number;
+  /** 上次触发冰电爆发的时刻，同一僵尸 4 秒内只爆发一次。 */
+  reactAt?: number;
   weatherSlow?: number;
   otherFreeze?: number;
   freeze: number;
@@ -268,14 +270,21 @@ export class Engine {
     this.rng = seed || 1;
     this.mowers = Array(this.level.rows).fill(this.settings.mowers);
     this.spareMowers = Array(this.level.rows).fill(false);
-    if (this.level.scene === "night")
-      for (let i = 0; i < Math.min(2 + this.level.stage, 8); i++)
+    if (isNight(this.level.scene)) {
+      // 迷雾关第 2、3 行是水路，墓碑只落在陆行。
+      const graveRows =
+        this.level.scene === "fog" ? [0, 1, 4, 5] : [0, 1, 2, 3, 4];
+      const graveCount = Math.min(2 + this.level.stage, 8);
+      for (let i = 0; i < graveCount; i++)
         this.tiles.push({
-          row: i % 5,
-          col: 5 + Math.floor(i / 5),
+          row: graveRows[i % graveRows.length],
+          col: 5 + Math.floor(i / graveRows.length),
           type: "grave",
           life: Infinity,
         });
+    }
+    if (isNight(this.level.scene) && this.level.mode === "normal")
+      this.say("夜晚没有天降阳光，蘑菇们更活跃；向日葵在夜里生产变慢");
     if (this.level.scene === "roof")
       for (let r = 0; r < 5; r++)
         for (let c = 0; c < 3; c++) this.addPlant("pot", r, c);
@@ -425,9 +434,12 @@ export class Engine {
   }
   electricHit(z: Zombie, baseDamage: number) {
     if (!electricTarget(z)) return;
+    // 同一僵尸 4 秒内只能触发一次冰电爆发；冷却中命中不消耗冰控。
+    const ready = this.time - (z.reactAt ?? -Infinity) >= 4;
     // Capture the reaction before base damage can kill the primary target.
-    const reaction = consumeIce(z);
+    const reaction = ready && consumeIce(z);
     const targets = reaction ? conductionTargets(z, this.zombies) : [];
+    if (reaction) z.reactAt = this.time;
     this.damage(z, baseDamage + (reaction ? 100 : 0));
     this.sound(reaction ? "conduction" : "electric", z.x);
     if (!reaction) return;
@@ -435,7 +447,7 @@ export class Engine {
     this.effect(z.x, z.row, "iceBreak");
     for (const other of targets) {
       this.arcEffect(z.x, z.row, other.x, other.row, true);
-      this.damage(other, 80);
+      this.damage(other, 40);
     }
   }
   random() {
@@ -1223,9 +1235,30 @@ export class Engine {
         }
       }
       this.warnDanger(id);
-      if (this.spawned === this.schedule.length && this.level.scene === "night")
-        for (const tile of this.tiles)
-          if (tile.type === "grave") this.spawn("basic", tile.row, tile.col);
+      if (this.spawned === this.schedule.length && isNight(this.level.scene)) {
+        const graves = this.tiles.filter((tile) => tile.type === "grave");
+        if (graves.length) {
+          this.say("墓碑里爬出了僵尸！", "alert");
+          this.sound("danger");
+          const stage = this.level.stage;
+          graves.forEach((tile, i) => {
+            const id =
+              stage >= 8
+                ? i % 3 === 0
+                  ? "bucket"
+                  : i % 2
+                    ? "cone"
+                    : "basic"
+                : stage >= 4
+                  ? i % 2
+                    ? "cone"
+                    : "basic"
+                  : "basic";
+            this.effect(tile.col, tile.row, "dust");
+            this.spawn(id, tile.row, tile.col);
+          });
+        }
+      }
     }
     if (this.iceStart && this.spawned > 0) {
       this.iceStart = false;
@@ -1260,7 +1293,12 @@ export class Engine {
           p.row,
           p.id === "sunshroom" && p.age < 120 ? 15 : p.id === "twin" ? 50 : 25,
         );
-        p.timer = 24;
+        // 夜晚与迷雾关没有天降阳光，向日葵类生产间隔放慢到 36 秒。
+        p.timer =
+          isNight(this.level.scene) &&
+          (p.id === "sunflower" || p.id === "twin")
+            ? 36
+            : 24;
       }
       if (d.kind === "coin") {
         if (p.id === "goldmagnet") {

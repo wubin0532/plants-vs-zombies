@@ -16,14 +16,14 @@ describe('冰电反应', () => {
   it('基础数值与第 1-8 关解锁', () => {
     expect(plantById.arc).toMatchObject({ cost: 225, hp: 300, cooldown: 7.5, damage: 20, interval: 2, unlock: 8 });
   });
-  it('一次满额反应造成 360 总伤害，消耗主目标冰冻但不消耗次级目标状态', () => {
+  it('一次满额反应造成 240 总伤害，消耗主目标冰冻但不消耗次级目标状态', () => {
     const e = new Engine(8, []), a = enemy(e);
     const group = [enemy(e, 1, 5), enemy(e, 2, 6), enemy(e, 3, 5)];
     applyControl(a, 'iceFreeze', 4); applyControl(a, 'iceSlow', 10);
     for (const z of group) applyControl(z, 'iceSlow', 10);
     e.electricHit(a, 20);
     expect(a.hp).toBe(1880); expect(a.freeze).toBe(0); expect(a.slow).toBe(0);
-    expect(group.map(z => z.hp)).toEqual([1920, 1920, 1920]);
+    expect(group.map(z => z.hp)).toEqual([1960, 1960, 1960]);
     expect(group.every(z => z.iceSlow === 10)).toBe(true);
     expect(e.reactions).toBe(1);
     expect(e.effects.filter(fx => fx.type === 'conduction')).toHaveLength(3);
@@ -33,14 +33,14 @@ describe('冰电反应', () => {
     const group = [enemy(e, 1, 5), enemy(e, 3, 5), enemy(e, 2, 6), enemy(e, 2, 4)];
     const distant = [enemy(e, 0, 5), enemy(e, 2, 7.01)];
     applyControl(a, 'iceSlow', 10); e.electricHit(a, 20);
-    expect(group.map(z => z.hp)).toEqual([1920, 1920, 1920, 2000]);
+    expect(group.map(z => z.hp)).toEqual([1960, 1960, 1960, 2000]);
     expect(distant.every(z => z.hp === 2000)).toBe(true);
   });
   it('主目标被基础伤害杀死也能传导，多个电源不重复消费同一冰系状态', () => {
     const e = new Engine(8, []), a = enemy(e), b = enemy(e, 1, 5);
     a.hp = 10; applyControl(a, 'iceSlow', 5);
     e.electricHit(a, 20); e.electricHit(a, 20);
-    expect(b.hp).toBe(1920); expect(e.reactions).toBe(1);
+    expect(b.hp).toBe(1960); expect(e.reactions).toBe(1);
     const c = enemy(e); applyControl(c, 'iceSlow', 5);
     e.electricHit(c, 20); e.electricHit(c, 20);
     expect(c.hp).toBe(1860); expect(e.reactions).toBe(2);
@@ -50,7 +50,7 @@ describe('冰电反应', () => {
     a.armor = 100; b.armor = 200;
     applyControl(a, 'iceSlow', 5); e.electricHit(a, 20);
     expect(a.hp).toBe(1980); expect(a.armor).toBe(0);
-    expect(b.hp).toBe(2000); expect(b.armor).toBe(120);
+    expect(b.hp).toBe(2000); expect(b.armor).toBe(160);
   });
   it('黄油、天气不能触发反应，消耗冰系后保留其余控制', () => {
     const e = new Engine(8, []), z = enemy(e);

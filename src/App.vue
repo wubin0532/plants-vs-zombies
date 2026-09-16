@@ -17,6 +17,8 @@ import {
   worlds,
   levels,
   isMushroom,
+  isNight,
+  recommendCards,
 } from "./game/content";
 import type { PlantDef, ZombieDef } from "./game/content";
 import { plantImage, zombieImage, gardenImage, bowlImage } from "./game/art";
@@ -194,7 +196,7 @@ const lesson = computed(() => {
   if (mode === "vases") return { id: "elements-vases", title: "认准两只组合罐", text: "带冰、电植物标记的罐子各藏一张种子卡，点击开罐后再种植。其他罐子仍有惊喜和危险。移植能调整阵型；水路先种睡莲。" };
   if (mode === "boss") return { id: "elements-boss", title: "用冰电清理召唤物", text: "冰、电植物随机供给，不保证配齐。组合只伤害召唤物，不能伤害僵王本体。继续保留寒冰菇和火爆辣椒应对冰火球；移植每局 3 次。" };
   if (e.isBelt) return { id: "elements-belt", title: "随机来牌，灵活配合", text: "传送带加入寒冰射手与电弧花，不保证成对出现。配齐时消耗冰系控制换取爆发；没配齐仍可按原阵容防守。移植每局 3 次，水路与屋顶需要底座。" };
-  if (e.level.id >= 8 || e.cards.includes("arc")) return { id: "elements-arc", title: "冰电爆发，控制换伤害", text: "电弧花需要 225 阳光。平时单体电击；命中冰系目标时，解除其冰系控制、追加 100 伤害，并向附近至多 3 个敌人各传导 80 伤害。移植带走主植物和南瓜，每局 3 次。" };
+  if (e.level.id >= 8 || e.cards.includes("arc")) return { id: "elements-arc", title: "冰电爆发，控制换伤害", text: "电弧花需要 225 阳光。平时单体电击；命中冰系目标时，解除其冰系控制、追加 100 伤害，并向附近至多 3 个敌人各传导 40 伤害；同一目标 4 秒内只能爆发一次。移植带走主植物和南瓜，每局 3 次。" };
   return { id: "elements-transplant", title: "给防线一次挪动的机会", text: "选「移植」，点主植物，再点绿色空格。每局免费 3 次，成功才扣次数；保留血量与冷却，南瓜一起搬，睡莲和花盆留在原地。再点工具或按 Esc 可取消。" };
 });
 function closeLesson() {
@@ -246,6 +248,10 @@ const recommended = computed(
     new Set(
       [...level.value.enemies.flatMap((id) => zombieById[id]?.counters ?? []), ...(level.value.id >= 8 ? ["snowpea", "arc"] : [])],
     ),
+);
+// 夜晚与迷雾关没有天降阳光，向日葵类生产效率降低，选卡界面给出提示。
+const lowSun = computed(
+  () => new Set(isNight(level.value.scene) ? ["sunflower", "twin"] : []),
 );
 const bestTimes = computed(() => {
   const map: Record<number, number> = {};
@@ -369,67 +375,7 @@ function chooseLevel(id: number) {
   levelId.value = id;
   modal.value = "";
   const unlocked = available.value.map((p) => p.id);
-  const candidates =
-    level.value.world === 0
-      ? [
-          "sunflower",
-          "pea",
-          "wallnut",
-          "potato",
-          "snowpea",
-          ...(id >= 8 ? ["arc"] : []),
-          "cherry",
-          "repeater",
-          "chomper",
-        ]
-      : level.value.world === 1
-        ? [
-            "sunshroom",
-            "puff",
-            "fume",
-            "grave",
-            "wallnut",
-            "ice",
-            "hypno",
-            "doom",
-          ]
-        : level.value.world === 2
-          ? [
-              "sunflower",
-              "lily",
-              "pea",
-              "wallnut",
-              "kelp",
-              "squash",
-              "three",
-              "cherry",
-            ]
-          : level.value.world === 3
-            ? [
-                "sunshroom",
-                "lily",
-                "fume",
-                "lantern",
-                "cactus",
-                "blover",
-                "wallnut",
-                "kelp",
-                "star",
-              ]
-            : [
-                "sunflower",
-                "pot",
-                "cabbage",
-                "kernel",
-                "wallnut",
-                "cherry",
-                "umbrella",
-                "melon",
-                "jalapeno",
-              ];
-  chosen.value = candidates
-    .filter((id) => unlocked.includes(id))
-    .slice(0, slots.value);
+  chosen.value = recommendCards(level.value, unlocked, slots.value);
   page.value = "select";
   window.scrollTo(0, 0);
   audio.play("click");
@@ -1132,6 +1078,7 @@ onBeforeUnmount(() => {
                 }}</strong
                 ><span class="price"><i></i>{{ p.cost }}</span
                 ><i v-if="recommended.has(p.id)" class="badge">推荐</i
+                ><i v-else-if="lowSun.has(p.id)" class="badge warn">夜间低效</i
                 ><b v-if="chosen.includes(p.id)">✓</b>
               </button>
             </div>

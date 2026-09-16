@@ -86,7 +86,17 @@ export class GardenScene extends Phaser.Scene {
     return cellY(row, this.engine.level.rows);
   }
   create() {
-    this.add.image(600, 345, "garden").setDisplaySize(1200, 690);
+    const bg = this.add.image(600, 345, "garden").setDisplaySize(1200, 690);
+    if (this.engine.level.scene === "fog") {
+      // 青灰色调，与月下墓园的蓝紫区分开；水面上下边缘加雾气过渡。
+      bg.setTint(0xc2d6cf);
+      const veil = this.add.graphics().setDepth(0.25);
+      for (const r of [2, 4]) {
+        const y = BOARD.top + (r * BOARD.lawnHeight) / this.engine.level.rows;
+        veil.fillStyle(0xdceee8, 0.22);
+        veil.fillRect(BOARD.left, y - 10, BOARD.cell * 9, 20);
+      }
+    }
     bakeMower(this);
     for (const id of ["cone", "bucket"]) {
       const texture = this.textures.createCanvas("armor-" + id, 160, 80)!;
@@ -507,6 +517,18 @@ export class GardenScene extends Phaser.Scene {
           ? previous.h + (currentJump - previous.h) * blend
           : currentJump,
         foot = feetY(renderRow, e.level.rows) - jump;
+      // 迷雾中未被路灯花照亮的僵尸只显示深色剪影，隐藏血条与状态图标。
+      const fogged =
+        e.level.scene === "fog" &&
+        e.fogClear <= 0 &&
+        !(e.level.mode === "storm" && e.time % 8 < 1) &&
+        renderX > 3.5 &&
+        !e.plants.some(
+          (p) =>
+            p.id === "lantern" &&
+            Math.abs(p.col - Math.round(renderX)) <= 2 &&
+            Math.abs(p.row - z.row) <= 1,
+        );
       const obj = this.sprite(
         key,
         texture,
@@ -521,13 +543,15 @@ export class GardenScene extends Phaser.Scene {
         .setDisplaySize(appearance.width * scale, appearance.height * scale)
         .setOrigin(0.5, appearance.origin)
         .setFlipX(z.reverse)
-        .setAlpha(z.underground ? 0.25 : 1);
+        .setAlpha(z.underground ? 0.25 : fogged ? 0.92 : 1);
       const pose = zombiePose(z);
       const extraPose = zombieVisualPose(z);
       obj.setAngle(pose.angle + extraPose.angle);
       obj.y += extraPose.offsetY;
       obj.setTint(
-        z.freeze > 0
+        fogged
+          ? 0x2b3733
+          : z.freeze > 0
           ? 0x9edbec
           : z.golden
             ? 0xffd94d
@@ -543,7 +567,7 @@ export class GardenScene extends Phaser.Scene {
       );
       if (z.flying) obj.y -= 17;
       const accent = zombieAccent(z);
-      if (accent) {
+      if (accent && !fogged) {
         const k=key+'accent';keep.add(k);
         const frozen=accent==='iceblock', status=z.disarmed||z.ally;
         this.sprite(k,'art-'+accent,this.x(renderX),frozen?foot-35*scale:status?foot-110*scale:foot-5,
@@ -551,7 +575,7 @@ export class GardenScene extends Phaser.Scene {
           .setAlpha(frozen?.55:status?.7:.3+Math.sin(z.motion*.3)*.1);
       }
 
-      if (!z.underground) {
+      if (!z.underground && !fogged) {
         const width = 45 * scale,
           left = this.x(renderX) - width / 2,
           top = obj.y - appearance.extent * scale - 7;
@@ -660,6 +684,20 @@ export class GardenScene extends Phaser.Scene {
         let label = this.objects.get(key) as Phaser.GameObjects.Text;
         if (!label) { label = this.add.text(x, y - 65, "冰电爆发", { fontSize: "18px", color: "#eaffff", stroke: "#26556c", strokeThickness: 4 }).setOrigin(0.5).setDepth(102); this.objects.set(key, label); }
         label.setPosition(x, y - 65 - t * 18).setAlpha(alpha);
+        continue;
+      }
+      if (fx.type === "dust") {
+        // 墓碑破土：三团尘土向上散开
+        for (let i = 0; i < 3; i++) {
+          const angle = -Math.PI / 2 + (i - 1) * 0.7,
+            radius = 6 + t * 26;
+          g.fillStyle(0x9a8f7a, alpha * 0.85);
+          g.fillCircle(
+            x + Math.cos(angle) * radius,
+            y - 10 + Math.sin(angle) * radius,
+            7 + t * 5,
+          );
+        }
         continue;
       }
       if (['magnet', 'wind', 'splash'].includes(fx.type)) {
@@ -889,14 +927,17 @@ export class GardenScene extends Phaser.Scene {
       e.fogClear <= 0 &&
       !(e.level.mode === "storm" && e.time % 8 < 1);
     const lanterns = e.plants.filter(p => p.id === "lantern");
-    const fogKey = `${fogVisible}:${e.level.rows}:` + lanterns.map(p => `${p.row},${p.col}`).join(";");
+    // 漂移量化到 0.5 秒一桶，配合 RenderTexture 缓存避免每帧重绘。
+    const driftBucket = fogVisible ? Math.floor(this.realTime * 2) : 0;
+    const fogKey = `${fogVisible}:${e.level.rows}:${driftBucket}:` + lanterns.map(p => `${p.row},${p.col}`).join(";");
     if (fogKey === this.fogKey) return;
     this.fogKey = fogKey;
     this.fog.clear();
     if (fogVisible) {
-      // 按格铺满，块与块之间不留缝，看起来才是连成一片的雾。
+      // 按格铺满并缓慢横向漂移，块与块之间不留缝，看起来才是连成一片的雾。
       const w = BOARD.cell,
-        h = BOARD.lawnHeight / e.level.rows;
+        h = BOARD.lawnHeight / e.level.rows,
+        drift = Math.sin(this.realTime * 0.35) * 7;
       for (let r = 0; r < e.level.rows; r++)
         for (let c = 4; c < 9; c++) {
           const lit = lanterns.some(
@@ -906,11 +947,11 @@ export class GardenScene extends Phaser.Scene {
               Math.abs(p.row - r) <= 1,
           );
           if (!lit) {
-            this.fog.fillStyle(0xc4d8cf, 0.66);
+            this.fog.fillStyle(0xc4d8cf, 0.85);
             this.fog.fillRect(
-              this.x(c) - w / 2,
+              this.x(c) - w / 2 + drift - 7,
               this.y(r) - h / 2,
-              w + 1,
+              w + 15,
               h + 1,
             );
           }
