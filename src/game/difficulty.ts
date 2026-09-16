@@ -94,33 +94,35 @@ export function makeWaves(
   settings: ReturnType<typeof battleSettings>,
 ): SpawnEvent[] {
   if (["boss", "vases"].includes(level.mode)) return [];
-  const n = Math.max(8, Math.round(settings.duration / 32)),
+  // 波次更密、单波更厚：前期用数量形成压迫，后期用密度和强化怪收尾。
+  const n = Math.max(10, Math.round(settings.duration / 30)),
     end = settings.duration - 45,
     result: SpawnEvent[] = [];
   for (let wave = 0; wave < n; wave++) {
     const progress = wave / (n - 1);
+    const base = 2.2 + level.world * 0.75 + level.stage * 0.2;
+    const ramp = 0.62 + progress * 0.78 + progress * progress * 0.85;
+    const surge = wave >= n - 3 ? 1.7 : wave >= n - 6 ? 1.2 : 1;
     const count = Math.max(
       1,
-      Math.round(
-        (2 + level.world * 0.7 + level.stage * 0.18) *
-          (0.6 + progress * 0.7 + progress * progress * 0.6) *
-          (wave >= n - 3 ? 1.6 : 1) *
-          settings.density,
-      ),
+      Math.round(base * ramp * surge * settings.density),
     );
     const start = settings.prep + (end - settings.prep) * progress;
     const unlocked = level.enemies.slice(
       0,
       Math.max(
         1,
-        Math.ceil(level.enemies.length * Math.min(1, 0.3 + progress)),
+        // 更早解锁本关的强力僵尸，避免前期只出现最弱的单位。
+        Math.ceil(level.enemies.length * Math.min(1, 0.45 + progress * 1.1)),
       ),
     );
     for (let j = 0; j < count; j++) {
       let id = unlocked[(wave * 7 + j * 3) % unlocked.length];
       if (level.mode === "whack") id = (wave + j) % 4 === 0 ? "cone" : "basic";
       if (j === 0 && (wave % 4 === 3 || wave === n - 1)) id = "flag";
-      result.push({ at: Math.min(end, start + j * 0.8), id, wave: wave + 1 });
+      // 关卡越靠后，同一波里的僵尸挤得越紧，压上来时更有“成群”的感觉。
+      const gap = Math.max(0.4, Math.min(0.8, level.interval / 11));
+      result.push({ at: Math.min(end, start + j * gap), id, wave: wave + 1 });
     }
   }
   return result.sort((a, b) => a.at - b.at);

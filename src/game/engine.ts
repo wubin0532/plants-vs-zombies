@@ -26,6 +26,16 @@ const DANGER_ZOMBIES = new Set([
   "jack",
   "boss",
 ]);
+/**
+ * “盾牌”型护甲（目前只有铁栅门）：只挡正面直射的豌豆类攻击，
+ * 穿透烟雾与投掷物能越过它直接打本体。
+ * 路障、铁桶、橄榄球头盔属于“硬护甲”，需要先被消耗掉才会伤到本体。
+ */
+const SHIELD_ARMOR = new Set(["screen"]);
+/** 磁力菇能吸走的金属装备。 */
+const MAGNET_TARGETS = new Set(["bucket", "screen", "football"]);
+/** 磁力菇能吸走的工具／器械，吸走后对应能力失效。 */
+const MAGNET_TOOLS = new Set(["pogo", "digger", "ladder", "jack"]);
 export type Plant = {
   uid: number;
   hurt?: number;  id: string;
@@ -38,6 +48,8 @@ export type Plant = {
   sleep: boolean;
   ready: boolean;
   layer: "base" | "main" | "armor";
+  /** 玉米炮两格是一个整体，记录另一半的 uid。 */
+  pair?: number;
   attackAge?: number;
   ladder?: boolean;
   digest?: number;
@@ -60,6 +72,8 @@ export type Zombie = {
   timer: number;
   age: number;
   jumped: boolean;
+  /** 金属装备被磁力菇吸走后置为 true（梯子、跳杆、矿镐、玩偶匣）。 */
+  disarmed?: boolean;
   underground: boolean;
   flying: boolean;
   reverse: boolean;
@@ -103,6 +117,14 @@ export type Shot = {
   speed: number;
   type: string;
   hit: boolean;
+  /** 直射弹丸在近距离主动瞄准潜水僵尸时才允许命中它。 */
+  snorkel?: boolean;
+  /** 连发队列：>0 表示尚未出膛，出膛时才确定起点并播放发射效果。 */
+  delay?: number;
+  /** 发射它的植物 uid；延迟出膛时用来重新定位，植物消失则取消。 */
+  plant?: number;
+  /** 杨桃等固定方向弹丸的行漂移速度（格/秒）。 */
+  rowSpeed?: number;
 };
 export type Token = {
   uid: number;
@@ -121,6 +143,8 @@ export type Effect = {
   life: number;
   duration: number;
   source?: string;
+  /** 发射闪光的方向，与实际弹丸出膛位置一致。 */
+  direction?: number;
   zombie?: Zombie;
   height?: number;
   toX?: number;
@@ -318,6 +342,8 @@ export class Engine {
   movableReason(p?: Plant) {
     if (!p || p.hp <= 0 || p.layer !== "main") return "请选择一株存活的主植物";
     if (p.id === "cob") return "玉米加农炮占两格，暂时不能移植";
+    if (this.shots.some(s => s.plant === p.uid && !s.hit && (s.delay ?? 0) > 0))
+      return "正在连发，出膛后才能移植";
     if (p.chomp || ["bomb", "doom", "ice", "jalapeno", "blover", "grave", "coffee", "squash", "kelp"].includes(plantById[p.id].kind))
       return "正在执行一次性效果或攻击动作，不能移植";
     if (this.zombies.some(z => z.special?.kind === "smash" && z.special.target === p.uid && !z.special.hit))
@@ -446,7 +472,7 @@ export class Engine {
     this.say(`⚠ 强敌来袭：${zombieById[id].name}！`, "alert");
     this.sound("warning");
   }
-  effect(x: number, row: number, type: string, source?: string) {
+  effect(x: number, row: number, type: string, source?: string, direction?: number) {
     const duration =
       type === "mower" ? 0.32 : type === "boom"
         ? 1.4
@@ -468,7 +494,10 @@ export class Engine {
       bite: "bite",
       plant: "plant",
       sun: "sun",
-      collect: "sun",
+      collect: source === "coin" ? "coin" : "sun",
+      magnet: "magnet",
+      wind: "wind",
+      splash: "splash",
       death: "death",
       mower: "mower",
       jump: "jump",
@@ -486,6 +515,7 @@ export class Engine {
       life: duration,
       duration,
       source,
+      direction,
     });
   }
   getDef(id: string) {
@@ -586,7 +616,14 @@ export class Engine {
     }
     if (!belt && (this.cooldowns[id] > 0 || this.sun < d.cost)) {
       if (this.cooldowns[id] > 0) this.say("种子还在冷却");
-      else if (!this.guide("sun", "阳光不足，先等向日葵生产"))
+      else if (
+        !this.guide(
+          "sun",
+          this.level.id <= 1
+            ? "阳光不足，先收集落下的阳光"
+            : "阳光不足，先等向日葵生产",
+        )
+      )
         this.say("阳光不足，先收集阳光");
       return false;
     }
@@ -611,29 +648,48 @@ export class Engine {
       this.effect(col, row, "sun");
       return true;
     }
+    let keepAwake = false;
     if (d.upgrade) {
       const old = this.plants.find(
         (p) => p.row === row && p.col === col && p.id === d.upgrade,
       );
-      if (old) this.remove(old);
+      if (old) {
+        // 咖啡豆唤醒过的蘑菇（如大喷菇升忧郁菇）升级后保持清醒。
+        keepAwake = !old.sleep;
+        // 只移除被替换的那一株，不连带同格的南瓜头等其它植物；
+        // 香蒲保留睡莲底座，升级后同格南瓜仍在、也能继续补种。
+        if (d.id !== "cattail")
+          this.plants = this.plants.filter((q) => q.uid !== old.uid);
+      }
       if (d.id === "cob") {
         const second = this.at(row, col + 1, "main");
         if (second) this.remove(second);
-        const blocker = this.addPlant("kernel", row, col + 1);
-        blocker.id = "cob";
-        blocker.ready = false;
-        blocker.timer = Infinity;
       }
     }
     const p = this.addPlant(d.id, row, col);
-    if (d.id === "cob") p.timer = 8;
+    if (keepAwake) p.sleep = false;
+    if (d.id === "cob") {
+      p.timer = 8;
+      const blocker = this.addPlant("kernel", row, col + 1);
+      blocker.id = "cob";
+      blocker.ready = false;
+      blocker.timer = Infinity;
+      p.pair = blocker.uid;
+      blocker.pair = p.uid;
+    }
     this.effect(col, row, "plant", d.id);
     this.guide("planted", "点击落下的阳光，攒够阳光继续种");
     return true;
   }
   remove(p: Plant, destroyed = false) {
     const before = this.plants.length;
-    this.plants = this.plants.filter((q) => q.uid !== p.uid);
+    // 玉米炮的任何一半被铲除或摧毁，另一半一起移除，不留无法发射的残格。
+    const pair = p.pair
+      ? this.plants.find((q) => q.uid === p.pair)
+      : undefined;
+    this.plants = this.plants.filter(
+      (q) => q.uid !== p.uid && q.uid !== pair?.uid,
+    );
     if (p.layer === "base")
       this.plants = this.plants.filter(
         (q) => q.row !== p.row || q.col !== p.col,
@@ -647,12 +703,7 @@ export class Engine {
       this.at(row, col, "main") ||
       this.at(row, col, "base");
     if (p) {
-      if (p.id === "cob") {
-        const neighbor = this.plants.find(
-          (q) => q.id === "cob" && q.row === row && Math.abs(q.col - col) === 1,
-        );
-        if (neighbor) this.remove(neighbor);
-      }
+      // remove() 会连带移除玉米炮配对的另一半。
       this.remove(p);
       this.effect(col, row, "plant");
     }
@@ -706,7 +757,9 @@ export class Engine {
         0,
         Math.max(
           1,
-          Math.ceil(this.level.enemies.length * Math.min(1, 0.3 + progress)),
+          Math.ceil(
+            this.level.enemies.length * Math.min(1, 0.45 + progress * 1.1),
+          ),
         ),
       )
       .filter((id) => unitPrice[id]);
@@ -714,13 +767,16 @@ export class Engine {
     const average =
       unlocked.reduce((s, id) => s + unitPrice[id], 0) / unlocked.length;
     let budget = Math.ceil(slots * average);
-    const rich = !novice && this.sun > 400 ? 1.25 : 0;
+    // 领先的玩家（阳光充足、没有丢车）会面对更厚的波次；已经吃紧时不加档。
+    const struggling = this.mowersLost > 0 || this.plantsLost >= 4;
+    const rich = !novice && !struggling && this.sun > 400 ? 1.35 : 0;
     const dominant =
       !novice &&
+      !struggling &&
       this.sun > 600 &&
       this.mowersLost === 0 &&
       this.livingEnemies().length <= 3
-        ? 1.2
+        ? 1.35
         : 0;
     let factor = Math.max(1, rich, dominant);
     if (!novice) {
@@ -864,12 +920,10 @@ export class Engine {
       id,
       row: r,
       x,
-      hp: (this.level.id === 25 ? d.hp * 0.4 : d.hp) * this.settings.health,
-      max: (this.level.id === 25 ? d.hp * 0.4 : d.hp) * this.settings.health,
-      armor:
-        (this.level.id === 25 ? d.armor * 0.4 : d.armor) * this.settings.health,
-      maxArmor:
-        (this.level.id === 25 ? d.armor * 0.4 : d.armor) * this.settings.health,
+      hp: d.hp * this.settings.health,
+      max: d.hp * this.settings.health,
+      armor: d.armor * this.settings.health,
+      maxArmor: d.armor * this.settings.health,
       motion: 0,
       action: "walk",
       slow: 0,
@@ -887,13 +941,18 @@ export class Engine {
       applyControl(this.zombies.at(-1)!, "weatherSlow", this.windUntil - this.time);
     this.livingCache = null;
   }
-  damage(z: Zombie, amount: number, pierce = false) {
+  /**
+   * pierce：完全无视护甲（爆炸、火焰、碾压、尖刺、吞噬等）。
+   * throughShield：只越过“盾牌”护甲（铁栅门），头盔类护甲照常吸收。
+   */
+  damage(z: Zombie, amount: number, pierce = false, throughShield = false) {
     if (z.hp <= 0) return;
     z.hurt = 0.16;
     const oldArmor = z.armor;
-    this.sound(z.armor > 0 && !pierce ? "metal" : "hit", z.x, z.id);
+    const bypass = pierce || (throughShield && SHIELD_ARMOR.has(z.id));
+    this.sound(z.armor > 0 && !bypass ? "metal" : "hit", z.x, z.id);
     let rest = amount;
-    if (z.armor > 0 && !pierce) {
+    if (z.armor > 0 && !bypass) {
       const used = Math.min(z.armor, rest);
       z.armor -= used;
       rest -= used;
@@ -959,7 +1018,12 @@ export class Engine {
         );
       return;
     }
-    const cannon = this.at(row, col, "main");
+    let cannon = this.at(row, col, "main");
+    if (cannon?.id === "cob" && !cannon.ready && cannon.pair) {
+      // 点玉米炮的右半格同样转到主炮的就绪检查与瞄准。
+      const main = this.plants.find((q) => q.uid === cannon!.pair);
+      if (main?.id === "cob") cannon = main;
+    }
     if (cannon?.id === "cob" && cannon.ready) {
       this.cannon = cannon.uid;
       this.say("点击目标区域发射玉米炮");
@@ -980,24 +1044,62 @@ export class Engine {
       this.effect(z.x, z.row, "ice", "hammer");
     } else this.electricHit(z, 120);
   }
-  shoot(p: Plant, z: Zombie, damage: number, type = p.id) {
+  shoot(
+    p: Plant,
+    z: Zombie | undefined,
+    damage: number,
+    type?: string,
+    options: { delay?: number; direction?: number; rowSpeed?: number } = {},
+  ) {
     const original = this.plants.find((q) => q.uid === p.uid);
+    // 黄油在发射前确定：飞行途中就能看到是玉米粒还是黄油，
+    // 黄油伤害更高（40），命中定身由碰撞分支处理。
+    // 只有规则层按默认弹种发射时才掷骰；显式指定的类型原样保留。
+    if (type === undefined && p.id === "kernel" && this.random() < 0.25) {
+      type = "butter";
+      damage *= 2;
+    }
+    type = type ?? p.id;
+    const speed = ["lob", "homing"].includes(plantById[p.id].kind) ? 4 : 6;
+    if (options.delay && options.delay > 0) {
+      // 连发排队：不在排队时播放声音或闪光；出膛时才确定方向与起点。
+      this.shots.push({
+        uid: this.uid++,
+        x: p.col,
+        row: p.row,
+        target: z?.uid ?? 0,
+        direction: options.direction ?? 0,
+        originX: p.col,
+        destinationX: z?.x ?? p.col,
+        damage,
+        speed,
+        type,
+        hit: false,
+        delay: options.delay,
+        plant: original?.uid,
+      });
+      return;
+    }
     if (original) original.attackAge = 0;
+    const direction = options.direction ?? (z ? (z.x >= p.col ? 1 : -1) : 1);
+    const originX = p.col + direction * 0.35;
     this.shots.push({
       uid: this.uid++,
-      x: p.col + 0.35,
+      x: originX,
       row: p.row,
-      target: z.uid,
-      direction: z.x >= p.col ? 1 : -1,
-      originX: p.col + 0.35,
-      destinationX: z.x,
+      target: z?.uid ?? 0,
+      direction,
+      originX,
+      destinationX: z?.x ?? originX,
       damage,
-      speed: ["lob", "homing"].includes(plantById[p.id].kind) ? 4 : 6,
+      speed,
       type,
       hit: false,
+      rowSpeed: options.rowSpeed,
+      snorkel: z?.id === "snorkel" || undefined,
     });
-    this.effect(p.col, p.row, "shoot", p.id);
-    this.sound(plantSound(p.id), p.col, p.id);
+    this.effect(p.col, p.row, "shoot", type, direction);
+    this.sound(plantSound(type === "butter" ? type : p.id), p.col, p.id);
   }
   protected(row: number, x: number) {
     return this.plants.some(
@@ -1103,10 +1205,10 @@ export class Engine {
         this.zombies.at(-1)!.golden = true;
         this.say("黄金僵尸出现了！击败它获得金币");
       }
-      // Elite variants: from wave 10 some zombies randomly spawn enraged —
+      // Elite variants: from the mid game some zombies randomly spawn enraged —
       // +60% health/armor and +30% speed, with odds growing each wave.
       const rageChance =
-        event.wave >= 10 ? Math.min(0.4, 0.08 + (event.wave - 10) * 0.04) : 0;
+        event.wave >= 7 ? Math.min(0.35, 0.05 + (event.wave - 7) * 0.03) : 0;
       if (rageChance > 0 && this.random() < rageChance) {
         const zed = this.zombies.at(-1)!;
         zed.hp *= 1.6;
@@ -1146,7 +1248,10 @@ export class Engine {
             z.row === p.row &&
             z.x > p.col - 0.2 &&
             (!z.flying || ["cactus", "cattail"].includes(p.id)) &&
-            (z.id !== "snorkel" || z.x < p.col + 0.65 || d.kind === "lob"),
+            (z.id !== "snorkel" ||
+              z.x < p.col + 0.65 ||
+              z.action === "eat" ||
+              d.kind === "lob"),
         )
         .sort((a, b) => a.x - b.x);
       if (d.kind === "sun" && p.timer <= 0) {
@@ -1157,11 +1262,17 @@ export class Engine {
         );
         p.timer = 24;
       }
-      if (d.kind === "coin" && p.timer <= 0) {
+      if (d.kind === "coin") {
         if (p.id === "goldmagnet") {
-          for (const t of [...this.tokens]) if (t.coin) this.collect(t.uid);
-        } else this.token(p.col, p.row, 10, true);
-        p.timer = 24;
+          // 金币 16 秒消失，24 秒的固定间隔会漏币：有币快消失时立刻收取。
+          if (p.timer <= 0 || this.tokens.some((t) => t.coin && t.age > 13)) {
+            for (const t of [...this.tokens]) if (t.coin) this.collect(t.uid);
+            p.timer = 24;
+          }
+        } else if (p.timer <= 0) {
+          this.token(p.col, p.row, 10, true);
+          p.timer = 24;
+        }
       }
       if (
         ["bomb", "doom", "ice", "jalapeno", "blover", "grave"].includes(
@@ -1204,7 +1315,7 @@ export class Engine {
               this.livingCache = null;
             }
           this.fogClear = 20;
-          this.effect(p.col, p.row, "ice", p.id);
+          this.effect(p.col, p.row, "wind", p.id);
         }
         if (d.kind === "grave")
           this.tiles = this.tiles.filter(
@@ -1256,7 +1367,7 @@ export class Engine {
         ahead.some((z) => z.x < p.col + 1)
       ) {
         this.damage(ahead[0], 1800, true);
-        this.effect(p.col, p.row, "boom");
+        this.effect(p.col, p.row, d.kind === "kelp" ? "splash" : "smash", p.id);
         this.remove(p);
       }
       if (d.kind === "spike" && p.timer <= 0) {
@@ -1274,19 +1385,24 @@ export class Engine {
         p.timer = 1;
       }
       if (d.kind === "magnet" && p.timer <= 0) {
-        const z = targets.find(
+        // 共享目标列表排除了地下单位，但矿工的矿镐也是金属，磁力菇要能吸到它。
+        const z = this.zombies.find(
           (z) =>
+            z.hp > 0 &&
+            !z.ally &&
             Math.abs(z.x - p.col) < 3 &&
             Math.abs(z.row - p.row) < 2 &&
-            ((["bucket", "screen", "football"].includes(z.id) && z.armor > 0) ||
-              (["pogo", "digger", "ladder"].includes(z.id) && !z.jumped)),
+            ((MAGNET_TARGETS.has(z.id) && z.armor > 0) ||
+              (MAGNET_TOOLS.has(z.id) && !z.disarmed)),
         );
         if (z) {
+          // 吸走头盔／铁栅门／梯子：护甲一起消失。
           z.armor = 0;
-          z.jumped = true;
+          z.disarmed = true;
+          if (MAGNET_TOOLS.has(z.id)) z.jumped = true;
           z.underground = false;
           p.timer = 12;
-          this.effect(z.x, z.row, "ice");
+          this.effect(z.x, z.row, "magnet", p.id);
         }
       }
       if (d.kind === "cannon" && p.timer <= 0) p.ready = true;
@@ -1322,36 +1438,84 @@ export class Engine {
                 : z.x >= p.col && z.x < p.col + 4),
           );
           for (const z of group) {
-            this.damage(z, d.damage!, true);
+            // 烟雾能穿过铁栅门，但打不穿路障、铁桶和橄榄球头盔。
+            this.damage(z, d.damage!, false, true);
             fired = true;
           }
         } else if (d.kind === "star") {
-          for (const z of targets.filter(
+          // 杨桃固定向五个方向各发一颗星，数量不随敌人多少变化。
+          const inRange = targets.some(
             (z) =>
               Math.abs(z.x - p.col) < 3 &&
               Math.abs(z.row - p.row) <= 2 &&
               !z.flying,
-          )) {
-            this.shoot(p, z, d.damage!);
+          );
+          if (inRange) {
+            for (const [dx, dr] of [
+              [-1, 0],
+              [-1, -1],
+              [-1, 1],
+              [1, -1],
+              [1, 1],
+            ] as const)
+              this.shoot(p, undefined, d.damage!, "star", {
+                direction: dx,
+                rowSpeed: dr * 6,
+              });
             fired = true;
           }
         } else if (d.kind === "homing") {
           if (targets[0]) {
+            // 香蒲每轮两枚追踪尖刺，第二枚稍晚出膛并重新瞄准。
             this.shoot(p, targets[0], d.damage!);
+            for (let i = 1; i < (d.burst ?? 1); i++)
+              this.shoot(p, targets[0], d.damage!, undefined, {
+                delay: i * 0.15,
+              });
             fired = true;
           }
         } else {
-          let lanes =
+          if (p.id === "split") {
+            // 裂荚射手同时照顾前后：前方最近的目标和后方最近的目标各发一颗。
+            const behind = targets
+              .filter((z) => z.row === p.row && !z.flying && z.x < p.col - 0.2)
+              .sort((a, b) => b.x - a.x)[0];
+            if (
+              ahead[0] &&
+              !(
+                this.level.scene === "roof" &&
+                p.col < 4 &&
+                ahead[0].x > 4
+              )
+            ) {
+              this.shoot(p, ahead[0], d.damage!);
+              fired = true;
+            }
+            if (behind) {
+              this.shoot(p, behind, d.damage!);
+              this.shoot(p, behind, d.damage!, undefined, {
+                delay: 0.15,
+                direction: -1,
+              });
+              fired = true;
+            }
+          }
+          const lanes =
             p.id === "three" ? [p.row - 1, p.row, p.row + 1] : [p.row];
-          for (const lane of lanes) {
+          for (const lane of p.id === "split" ? [] : lanes) {
             let z =
               lane === p.row
                 ? ahead[0]
                 : targets.find(
-                    (z) => z.row === lane && z.x > p.col && !z.flying,
+                    (z) =>
+                      z.row === lane &&
+                      z.x > p.col &&
+                      !z.flying &&
+                      (z.id !== "snorkel" ||
+                        z.x < p.col + 0.65 ||
+                        z.action === "eat" ||
+                        d.kind === "lob"),
                   );
-            if (p.id === "split")
-              z = targets.find((z) => z.row === p.row && !z.flying);
             if (z) {
               if (d.kind === "shroom" && p.id !== "scaredy" && z.x - p.col > 3)
                 continue;
@@ -1371,6 +1535,12 @@ export class Engine {
               )
                 continue;
               this.shoot({ ...p, row: lane }, z, d.damage!);
+              // 双发/机枪真实连发：每颗独立结算，前一目标死亡不吞掉后续弹丸。
+              if (lane === p.row)
+                for (let i = 1; i < (d.burst ?? 1); i++)
+                  this.shoot({ ...p, row: lane }, z, d.damage!, undefined, {
+                    delay: i * 0.15,
+                  });
               fired = true;
             }
           }
@@ -1395,8 +1565,69 @@ export class Engine {
       }
     }
     for (const s of this.shots) {
+      if (s.delay && s.delay > 0) {
+        // 连发排队：出膛时刻重新瞄准；植物或合法目标都不在就取消这颗弹丸。
+        s.delay -= dt;
+        if (s.delay > 0) continue;
+        const homingShot = s.type === "cattail";
+        const source = this.plants.find(
+          (q) => q.uid === s.plant && q.hp > 0 && !q.sleep,
+        );
+        let z = this.zombies.find(
+          (q) => q.uid === s.target && q.hp > 0 && !q.ally && !q.underground,
+        );
+        if (source && (!z || (!homingShot && z.row !== source.row))) {
+          z = this.zombies
+            .filter(
+              (q) =>
+                q.hp > 0 &&
+                !q.ally &&
+                !q.underground &&
+                (homingShot
+                  ? !q.flying || s.type === "cattail"
+                  : q.row === source.row &&
+                    !q.flying &&
+                    (s.direction >= 0
+                      ? q.x > source.col - 0.2
+                      : q.x < source.col + 0.2) &&
+                    (q.id !== "snorkel" ||
+                      q.x < source.col + 0.65 ||
+                      q.action === "eat")),
+            )
+            .sort((a, b) =>
+              homingShot
+                ? Math.abs(a.x - source.col) +
+                  Math.abs(a.row - source.row) -
+                  (Math.abs(b.x - source.col) + Math.abs(b.row - source.row))
+                : s.direction >= 0
+                  ? a.x - b.x
+                  : b.x - a.x,
+            )[0];
+        }
+        if (!source || !z) {
+          s.hit = true;
+          continue;
+        }
+        s.target = z.uid;
+        if (!s.direction) s.direction = z.x >= source.col ? 1 : -1;
+        s.row = source.row;
+        s.originX = source.col + s.direction * 0.35;
+        s.x = s.originX;
+        s.destinationX = z.x;
+        s.snorkel = z.id === "snorkel" || undefined;
+        source.attackAge = 0;
+        this.effect(source.col, source.row, "shoot", s.type, s.direction);
+        this.sound(
+          plantSound(s.type === "butter" ? s.type : source.id),
+          source.col,
+          source.id,
+        );
+        continue;
+      }
       const homing = s.type === "cattail";
-      const lob = ["cabbage", "kernel", "melon", "winter"].includes(s.type);
+      const lob = ["cabbage", "kernel", "butter", "melon", "winter"].includes(
+        s.type,
+      );
       let target = this.zombies.find(
         (z) => z.uid === s.target && z.hp > 0 && !z.ally,
       );
@@ -1410,9 +1641,15 @@ export class Engine {
       }
       const previous = s.x;
       s.x += s.direction * s.speed * dt;
-      if ((homing || lob || s.type === "star") && target)
+      if (s.rowSpeed) s.row += s.rowSpeed * dt;
+      if ((homing || lob || (s.type === "star" && !s.rowSpeed)) && target)
         s.row += (target.row - s.row) * Math.min(1, dt * 9);
-      if (s.x < -1 || s.x > 11) {
+      // 小喷菇/海蘑菇的孢子飞三格后消散，近处目标先死也不会继续飞。
+      if (["puff", "sea"].includes(s.type) && Math.abs(s.x - s.originX) > 3) {
+        s.hit = true;
+        continue;
+      }
+      if (s.x < -1 || s.x > 11 || s.row < -1 || s.row > this.level.rows) {
         s.hit = true;
         continue;
       }
@@ -1423,6 +1660,12 @@ export class Engine {
             !z.ally &&
             !z.underground &&
             (!z.flying || ["cactus", "cattail"].includes(s.type)) &&
+            // 潜水的僵尸不会被普通直射弹丸挡住；投掷、追踪与近距离瞄准它的弹丸除外。
+            (z.id !== "snorkel" ||
+              lob ||
+              homing ||
+              s.snorkel ||
+              z.action === "eat") &&
             Math.abs(z.row - s.row) < 0.35 &&
             z.x >= Math.min(previous, s.x) - 0.18 &&
             z.x <= Math.max(previous, s.x) + 0.18,
@@ -1430,7 +1673,10 @@ export class Engine {
         .sort((a, b) => Math.abs(a.x - previous) - Math.abs(b.x - previous))[0];
       const torch = this.plants.find(
         (p) =>
-          p.id === "torch" && p.row === s.row && Math.abs(p.col - s.x) < 0.15,
+          p.id === "torch" &&
+          p.row === s.row &&
+          p.col >= Math.min(previous, s.x) - 0.15 &&
+          p.col <= Math.max(previous, s.x) + 0.15,
       );
       if (
         torch &&
@@ -1444,11 +1690,14 @@ export class Engine {
         this.damage(
           z,
           s.damage,
+          false,
           z.id === "screen" &&
-            ["cabbage", "kernel", "melon", "winter"].includes(s.type),
+            ["cabbage", "kernel", "butter", "melon", "winter"].includes(
+              s.type,
+            ),
         );
         if (["snowpea", "winter"].includes(s.type)) applyControl(z, "iceSlow", 10);
-        if (s.type === "kernel" && this.random() < 0.25) applyControl(z, "otherFreeze", 3);
+        if (s.type === "butter") applyControl(z, "otherFreeze", 3);
         if (s.type === "cactus" || s.type === "cattail") z.flying = false;
         if (["melon", "winter", "fire"].includes(s.type))
           for (const other of this.zombies)
@@ -1530,7 +1779,13 @@ export class Engine {
     }
     this.zombies = this.zombies.filter((z) => z.hp > 0 && z.x > -2 && z.x < 12);
     const alivePlants = this.plants.length;
-    this.plants = this.plants.filter((p) => p.hp > 0);
+    // 玉米炮一半被吃掉时，配对的另一半也要一起移除。
+    const deadPairs = new Set(
+      this.plants.filter((p) => p.hp <= 0 && p.pair).map((p) => p.pair!),
+    );
+    this.plants = this.plants.filter(
+      (p) => p.hp > 0 && !deadPairs.has(p.uid),
+    );
     this.plantsLost += alivePlants - this.plants.length;
     if (
       this.status === "playing" &&
@@ -1657,7 +1912,12 @@ export class Engine {
       }
       return;
     }
-    if (z.id === "jack" && z.age > 15 && this.random() < dt * 0.2) {
+    if (
+      z.id === "jack" &&
+      !z.disarmed &&
+      z.age > 15 &&
+      this.random() < dt * 0.2
+    ) {
       if (z.ally) {
         for (const enemy of this.zombies)
           if (!enemy.ally && Math.abs(enemy.row - z.row) <= 1 && Math.abs(enemy.x - z.x) < 1.5)
@@ -1818,6 +2078,14 @@ export class Engine {
       return;
     }
     let speed = (d.speed / 96) * this.settings.speed * (z.boost ?? 1);
+    if (z.id === "bobsled") {
+      // 雪橇小队依赖冰道：在冰上快速推进，离开冰道就失去速度。
+      const onIce = this.tiles.some(
+        (t) =>
+          t.type === "ice" && t.row === z.row && Math.abs(t.col - z.x) < 0.7,
+      );
+      speed *= onIce ? 1.6 : 0.35;
+    }
     if (z.id === "paper" && z.armor === 0) speed *= 2.8;
     if (z.jumped && ["pole", "dolphin"].includes(z.id)) speed *= 0.5;
     if (slowed) speed *= 0.5;

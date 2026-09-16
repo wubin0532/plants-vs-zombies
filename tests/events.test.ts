@@ -85,11 +85,11 @@ it("第 10 波起随机出现狂暴僵尸：生命护甲 +60%、移速 +30%", ()
   }
   expect(e.message).toContain("狂暴僵尸");
 });
-it("第 10 波之前不会出现狂暴僵尸", () => {
+it("第 7 波之前不会出现狂暴僵尸", () => {
   const e = new Engine(1, []);
   e.schedule = Array.from({ length: 30 }, (_, i) => ({
     at: e.time + i * 0.05,
-    wave: 9,
+    wave: 6,
     id: "basic",
   }));
   for (let i = 0; i < 20 && e.zombies.length < 30; i++) e.step(0.1);

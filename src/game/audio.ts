@@ -1,8 +1,14 @@
 import { isMushroom } from "./content";
 export type SoundKind =
-  | "coin"
   | "electric"
   | "conduction"
+  | "needle"
+  | "star"
+  | "butter"
+  | "magnet"
+  | "wind"
+  | "coin"
+  | "splash"
   | "smash"
   | "chomp"
   | "land"
@@ -54,7 +60,10 @@ export class GardenAudio {
   private variant = 0;
   private sunStreak = 0;
   private lastSun = -10;
-  update(time: number, pressure: number) {
+  private scene = "day";
+  private generation = 0;
+  update(time: number, pressure: number, scene = "day") {
+    this.scene = scene;
     this.pressure = pressure;
     const beat = Math.floor(time / (pressure > 0.6 ? 0.4 : 0.6));
     if (beat !== this.musicBeat) {
@@ -128,8 +137,9 @@ export class GardenAudio {
   play(kind: SoundKind, x = 4, source?: string) {
     if (!this.enabled) return;
     if (!this.ctx || this.ctx.state !== "running") {
+      const generation = this.generation;
       void this.unlock().then((ok) => {
-        if (ok) this.play(kind, x, source);
+        if (ok && generation === this.generation) this.play(kind, x, source);
       });
       return;
     }
@@ -147,7 +157,7 @@ export class GardenAudio {
               : kind === "metal"
                 ? 0.1
                 : 0.075;
-    const key = kind === "explosion" ? kind + (source || "") : kind;
+    const key = ["explosion", "pea", "spore", "lob", "needle", "star"].includes(kind) ? kind + (source || "") : kind;
     const important = [
       "explosion",
       "freeze",
@@ -199,7 +209,10 @@ export class GardenAudio {
     pan.pan.value = Math.max(-0.8, Math.min(0.8, (x - 4) / 6));
     bus.connect(pan);
     pan.connect(this.master!);
-    const variation = [0.95, 1.03, 0.99, 1.06, 1][this.variant++ % 5];
+    const species = source === 'garg' || source === 'boss' ? .68 : source === 'imp' ? 1.45 :
+      source === 'football' ? .83 : source === 'yeti' ? .78 : source === 'jack' ? 1.2 : 1;
+    const variation = [0.95, 1.03, 0.99, 1.06, 1][this.variant++ % 5] *
+      (['groan','bite','death','land'].includes(kind) ? species : 1);
     if (kind === "sun") {
       this.sunStreak =
         now - this.lastSun < 1.5 ? Math.min(5, this.sunStreak + 1) : 0;
@@ -300,7 +313,11 @@ export class GardenAudio {
           this.pressure > 0.6
             ? [130.81, 155.56, 196, 233.08, 196, 155.56, 146.83, 174.61]
             : [196, 246.94, 293.66, 329.63, 293.66, 246.94, 220, 164.81];
-        const note = notes[this.musicBeat % notes.length] || 196;
+        const theme = this.scene==='night' || this.scene==='fog'
+          ? [196,233.08,293.66,349.23,293.66,233.08,174.61,146.83]
+          : this.scene==='pool' ? [261.63,329.63,392,329.63,293.66,349.23,440,349.23]
+          : this.scene==='roof' ? [164.81,196,246.94,293.66,246.94,196,146.83,185] : notes;
+        const note = (this.pressure > .6 ? notes : theme)[this.musicBeat % notes.length] || 196;
         const peak = this.pressure > 0.85;
         const melody = peak ? note * 2 : note;
         voice(melody, melody, 0.5, 0.075, "triangle");
@@ -310,12 +327,53 @@ export class GardenAudio {
         break;
       }
       case "ambient":
-        noise(1.5, 600, 0.04);
-        voice(1800, 2100, 0.14, 0.025, "sine", 0.3);
-        voice(2200, 1900, 0.18, 0.018, "sine", 0.55);
+        if (this.scene === 'night' || this.scene === 'fog') {
+          noise(2, this.scene === 'fog' ? 380 : 1100, .035);
+          for(let i=0;i<3;i++) voice(3200,2900,.08,.012,'sine',.4+i*.19);
+          if(this.scene==='fog') voice(140,110,1.4,.025);
+        } else if (this.scene === 'pool') {
+          noise(1.8,480,.055);
+          voice(470,280,.12,.025,'sine',.4);
+          voice(650,340,.16,.02,'sine',.9);
+        } else if (this.scene === 'roof') {
+          noise(2.2,780,.045);
+          voice(720,710,.5,.012,'triangle',.8);
+        } else {
+          noise(1.5,600,.035);
+          voice(1800,2100,.14,.025,'sine',.3);
+          voice(2200,1900,.18,.018,'sine',.55);
+        }
+        break;
+      case 'needle':
+        noise(.07, source==='cattail'?3800:2600,.12);
+        voice(source==='cattail'?1250:900,380,.11,.09,'triangle');
+        break;
+      case 'star':
+        voice(1320,1760,.17,.08,'sine');
+        voice(1980,2640,.12,.035,'sine',.025);
+        break;
+      case 'butter':
+        voice(180,75,.15,.13,'sine');
+        noise(.12,520,.11);
+        break;
+      case 'magnet':
+        voice(220,660,.36,.09,'triangle');
+        voice(440,880,.26,.035,'sine',.06);
+        break;
+      case 'wind':
+        noise(.8,1800,.15);
+        noise(.6,650,.09,.1);
+        break;
+      case 'coin':
+        voice(1397,1397,.2,.085,'sine');
+        voice(2093,2093,.3,.045,'sine',.055);
+        break;
+      case 'splash':
+        noise(.3,1300,.15);
+        voice(420,100,.18,.09,'sine');
         break;
       case "pea":
-        voice(510, 140, 0.11, 0.19, "triangle");
+        voice(source==='gatling'?400:source==='repeater'?470:510, 140, 0.11, 0.19, "triangle");
         noise(0.055, 1700, 0.12);
         break;
       case "electric":
@@ -331,12 +389,12 @@ export class GardenAudio {
         noise(0.16, 4600, 0.13);
         break;
       case "spore":
-        noise(0.25, 620, 0.3);
-        voice(150, 85, 0.18, 0.1, "triangle");
+        noise(source==='gloom'?.38:source==='fume'?.3:.16,source==='sea'?900:620,source==='fume'||source==='gloom'?.23:.15);
+        voice(source==='puff'?210:150, 85, 0.18, 0.08, "triangle");
         break;
       case "lob":
-        voice(170, 420, 0.17, 0.13, "triangle");
-        noise(0.14, 800, 0.12);
+        voice(source==='melon'||source==='cob'?105:source==='kernel'?260:170, 420, 0.17, 0.13, "triangle");
+        noise(0.14, source==='kernel'?1400:800, 0.12);
         break;
       case "bite":
         noise(0.12, 850, 0.35);
@@ -421,10 +479,6 @@ export class GardenAudio {
         voice(1320 * pitch, 1320 * pitch, 0.24, 0.11, "sine", 0.09);
         break;
       }
-      case "coin":
-        voice(1568, 1568, 0.12, 0.10, "sine");
-        voice(2093, 2093, 0.18, 0.07, "sine", 0.05);
-        break;
       case "warning":
         voice(740, 740, 0.13, 0.14, "square");
         voice(554, 554, 0.15, 0.14, "square", 0.15);
@@ -470,6 +524,7 @@ export class GardenAudio {
     tail.stop(now + end);
   }
   stop() {
+    this.generation++;
     for (const voice of this.voices) {
       try {
         voice.stop();
@@ -489,8 +544,19 @@ export class GardenAudio {
   }
 }
 export function plantSound(id: string): SoundKind {
+  if (["cactus", "cattail"].includes(id)) return "needle";
+  if (id === "star") return "star";
+  if (id === "butter") return "butter";
+  if (["magnet", "goldmagnet"].includes(id)) return "magnet";
+  if (id === "blover") return "wind";
+  if (id === "kelp" || id === "lily") return "splash";
+  if (id === "chomper") return "chomp";
+  if (id === "squash") return "smash";
+  if (["cherry", "doom", "potato", "jalapeno"].includes(id)) return "explosion";
+  if (id === "marigold") return "coin";
+  if (["sunflower", "sunshroom", "twin", "coffee"].includes(id)) return "sun";
   if (["snowpea", "winter", "ice"].includes(id)) return "frost";
   if (["puff", "fume", "scaredy", "sea", "gloom"].includes(id)) return "spore";
   if (["cabbage", "kernel", "melon", "cob"].includes(id)) return "lob";
-  return "pea";
+  return ["pea", "repeater", "three", "split", "gatling"].includes(id) ? "pea" : "plant";
 }

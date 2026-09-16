@@ -27,7 +27,7 @@ import { Engine } from "./game/engine";
 import { mountGame } from "./game/scene";
 import { GardenAudio } from "./game/audio";
 import type { SoundKind } from "./game/audio";
-import { useSave } from "./store";
+import { seedSlotPriceFor, useSave } from "./store";
 const save = useSave();
 save.load();
 {
@@ -67,9 +67,21 @@ const available = computed(() =>
   plants.filter((p) => p.unlock <= save.data.unlocked),
 );
 const slots = computed(() =>
-  Math.min(10, 6 + Math.floor((save.data.unlocked - 1) / 10)),
+  Math.min(
+    10,
+    6 + Math.floor((save.data.unlocked - 1) / 10) + save.data.seedSlots,
+  ),
 );
 const garden = computed(() => gardenImage(level.value.scene));
+const levelHint = computed(() => {
+  const l = level.value;
+  if (l.id === 1) return "第一关只有豌豆射手：先点落下的阳光，再守住路线。";
+  if (l.world === 1) return "夜间没有自然掉落的阳光。记得带上阳光菇。";
+  if (l.world === 2 || l.world === 3)
+    return "水路种植陆生植物前，需要先放置睡莲。";
+  if (l.world === 4) return "屋顶需要花盆。投手的抛物线能越过斜坡。";
+  return "先建立阳光生产，再用射手与坚果搭起防线。";
+});
 const previewSettings = computed(() =>
   battleSettings(level.value, save.data.options),
 );
@@ -79,6 +91,55 @@ const modeNames = {
   hard: "困难",
   custom: "自定义",
 };
+const gardenTips = [
+  {
+    img: "sunflower",
+    text: "先种向日葵。充足的阳光，是好防线的开始。",
+  },
+  {
+    img: "sunshroom",
+    text: "夜间没有自然掉落的阳光，记得带上阳光菇。",
+  },
+  {
+    img: "fume",
+    text: "大喷菇能越过铁栅门，但打不穿铁桶和橄榄球头盔。",
+  },
+  {
+    img: "magnet",
+    text: "磁力菇能吸走铁桶、橄榄球头盔和玩偶匣。",
+  },
+  {
+    img: "cactus",
+    text: "仙人掌能击落气球僵尸，香蒲也能自动追踪空中目标。",
+  },
+  {
+    img: "tallnut",
+    text: "高坚果能挡住撑杆僵尸和海豚骑士的跳跃。",
+  },
+  {
+    img: "umbrella",
+    text: "叶子保护伞能防蹦极偷植物和投石车的篮球。",
+  },
+  {
+    img: "ice",
+    text: "寒冰菇能熄灭火球，火爆辣椒能融化同一行的冰球。",
+  },
+];
+const tipIndex = ref(0);
+let tipTimer: number | undefined;
+function nextTip() {
+  tipIndex.value = (tipIndex.value + 1) % gardenTips.length;
+}
+function startTipTimer() {
+  stopTipTimer();
+  tipTimer = window.setInterval(nextTip, 6000);
+}
+function stopTipTimer() {
+  if (tipTimer) {
+    window.clearInterval(tipTimer);
+    tipTimer = undefined;
+  }
+}
 function updateSettings() {
   audio.volume = save.data.volume;
   audio.mix = { ...save.data.mix };
@@ -175,6 +236,11 @@ const loseTips = [
   "土豆地雷便宜又实用，开局先埋几颗。",
 ];
 const daily = computed(() => dailyChallenge(new Date(), save.data.unlocked));
+// 战斗中的种子栏与关卡信息：每日挑战使用每日卡池与每日关卡，而不是冒险选卡。
+const battleCards = computed(() =>
+  dailyMode.value ? daily.value.cards : chosen.value,
+);
+const battleLevel = computed(() => engine.value?.level ?? level.value);
 const recommended = computed(
   () =>
     new Set(
@@ -256,22 +322,32 @@ function closeDemo() {
   demoId.value = "";
 }
 const shopItems = [
-  { id: "sun-boost", name: "应急阳光", price: 150, desc: "下一局开局阳光 +75。" },
+  {
+    id: "sun-boost",
+    name: "应急阳光",
+    price: 150,
+    desc: "下一局开局阳光 +75。",
+    img: "sunflower",
+  },
   {
     id: "spare-mower",
     name: "备用小推车",
     price: 200,
     desc: "下一局每行多一台备用小推车。",
-  },
-  {
-    id: "ice-start",
-    name: "冰冻开场",
-    price: 100,
-    desc: "下一局首波僵尸出场时，全体冰冻 4 秒。",
+    img: "mower",
   },
 ];
+const seedSlotPrice = computed(() => seedSlotPriceFor(save.data.seedSlots));
+const seedSlotsFull = computed(() => slots.value >= 10);
 function buy(item: (typeof shopItems)[number]) {
   if (save.buyItem(item.id, item.price)) audio.play("sun");
+}
+function buySeedSlot() {
+  if (seedSlotsFull.value || save.data.coins < seedSlotPrice.value) return;
+  save.data.coins -= seedSlotPrice.value;
+  save.data.seedSlots += 1;
+  save.persist();
+  audio.play("sun");
 }
 function startDaily() {
   dailyMode.value = true;
@@ -392,14 +468,9 @@ async function start() {
       engine.value.sun += 75;
       usedItem = true;
     }
-    if ((items["spare-mower"] ?? 0) > 0) {
+    if ((items["spare-mower"] ?? 0) > 0 && engine.value.settings.mowers) {
       items["spare-mower"]--;
       engine.value.spareMowers.fill(true);
-      usedItem = true;
-    }
-    if ((items["ice-start"] ?? 0) > 0) {
-      items["ice-start"]--;
-      engine.value.iceStart = true;
       usedItem = true;
     }
     if (usedItem) save.persist();
@@ -427,8 +498,7 @@ async function start() {
           settled = true;
           result.value = e.status;
           save.data.kills += e.kills;
-          const mowersIntact =
-            e.mowers.every(Boolean) && e.spareMowers.every((m) => !m);
+          const mowersIntact = e.mowersLost === 0;
           if (e.status === "won") {
             if (dailyMode.value) save.recordDaily(daily.value.date, e.time);
             else if (e.settings.difficulty !== "custom") {
@@ -536,6 +606,34 @@ function selectSeed(id: string) {
   e.selected = selected ? "" : id;
   tick.value++;
   audio.play("click");
+}
+// 按下卡片就选中，这样直接从卡片拖到草坪时也能看到落点预览；
+// 随后的 click 只负责“再点一次取消选择”。
+let seededByPress = false;
+function seedDown(id: string) {
+  const e = engine.value;
+  seededByPress = false;
+  if (!e || e.paused || e.status !== "playing") return;
+  if (e.level.mode === "whack") return;
+  if (id === "shovel" || e.selected === id) {
+    seededByPress = false;
+    return;
+  }
+  if (!e.isBelt && (e.sun < e.getDef(id).cost || e.cooldowns[id] > 0)) {
+    seededByPress = false;
+    return;
+  }
+  e.cancelSelection();
+  e.selected = id;
+  seededByPress = true;
+  tick.value++;
+}
+function seedClick(id: string) {
+  if (seededByPress) {
+    seededByPress = false;
+    return;
+  }
+  selectSeed(id);
 }
 function pause() {
   if (engine.value?.status === "playing" && !lessonOpen.value) {
@@ -662,7 +760,7 @@ function keyboard(e: KeyboardEvent) {
     }
   }
   if (/^[1-9]$/.test(e.key)) {
-    const ids = engine.value?.isBelt ? stats.value.belt : chosen.value;
+    const ids = engine.value?.isBelt ? stats.value.belt : battleCards.value;
     const id = ids[Number(e.key) - 1];
     if (id) selectSeed(id);
   }
@@ -671,6 +769,7 @@ onMounted(() => {
   audio.enabled = save.data.sound;
   audio.volume = save.data.volume;
   audio.mix = { ...save.data.mix };
+  startTipTimer();
   document.addEventListener("visibilitychange", visibility);
   document.addEventListener("fullscreenchange", fullscreenChanged);
   window.addEventListener("keydown", keyboard);
@@ -680,6 +779,7 @@ onBeforeUnmount(() => {
   game?.destroy(true);
   closeDemo();
   audio.dispose();
+  stopTipTimer();
   document.removeEventListener("visibilitychange", visibility);
   document.removeEventListener("fullscreenchange", fullscreenChanged);
   document.body.classList.remove("battle-fullscreen");
@@ -822,10 +922,13 @@ onBeforeUnmount(() => {
               </p></span
             ><b>↗</b>
           </button>
-          <div class="garden-tip">
+          <div class="garden-tip" @click="nextTip">
             <span>园丁小贴士</span>
-            <p>先种向日葵。<br />充足的阳光，是好防线的开始。</p>
-            <img :src="pa('sunflower')" alt="" />
+            <p>{{ gardenTips[tipIndex].text }}</p>
+            <img
+              :src="pa(gardenTips[tipIndex].img)"
+              :alt="plantById[gardenTips[tipIndex].img].name"
+            />
           </div>
         </section>
       </template>
@@ -947,10 +1050,18 @@ onBeforeUnmount(() => {
         <section class="shop-panel">
           <div class="panel-heading">
             <h3>庭院商店</h3>
-            <span>{{ save.data.coins }} 金币 · 开局时消耗，重开不返还</span>
+            <span>{{ save.data.coins }} 金币 · 消耗道具开局使用，扩容永久生效</span>
           </div>
           <div class="shop-grid">
             <div v-for="item in shopItems" :key="item.id" class="shop-item">
+              <div class="shop-thumb">
+                <img
+                  v-if="item.img !== 'mower'"
+                  :src="pa(item.img)"
+                  :alt="item.name"
+                />
+                <span v-else class="mower-mini" aria-hidden="true"></span>
+              </div>
               <strong
                 >{{ item.name
                 }}<em v-if="save.data.items[item.id]"
@@ -964,6 +1075,26 @@ onBeforeUnmount(() => {
                 @click="buy(item)"
               >
                 {{ item.price }} 金币
+              </button>
+            </div>
+            <div class="shop-item seed-slot">
+              <div class="shop-thumb">
+                <span class="slot-mini" aria-hidden="true">
+                  <i></i><i></i><i></i>
+                </span>
+              </div>
+              <strong
+                >种子袋扩容<em v-if="save.data.seedSlots"
+                  >已扩容 +{{ save.data.seedSlots }}</em
+                ></strong
+              >
+              <p>永久增加 1 个卡槽。当前 {{ slots }} / 10。</p>
+              <button
+                class="plain"
+                :disabled="save.data.coins < seedSlotPrice || seedSlotsFull"
+                @click="buySeedSlot"
+              >
+                {{ seedSlotPrice }} 金币
               </button>
             </div>
           </div>
@@ -1035,15 +1166,7 @@ onBeforeUnmount(() => {
               </div>
             </div>
             <p class="hint">
-              {{
-                level.world === 1
-                  ? "夜间没有自然掉落的阳光。记得带上阳光菇。"
-                  : level.world === 2 || level.world === 3
-                    ? "水路种植陆生植物前，需要先放置睡莲。"
-                    : level.world === 4
-                      ? "屋顶需要花盆。投手的抛物线能越过斜坡。"
-                      : "先建立阳光生产，再用射手与坚果搭起防线。"
-              }}
+              {{ levelHint }}
             </p>
             <button class="primary" :disabled="!chosen.length" @click="start">
               一起守住庭院 <span>→</span>
@@ -1054,7 +1177,7 @@ onBeforeUnmount(() => {
       <template v-else>
         <section class="game-heading">
           <div>
-            <span class="kicker">{{ worlds[level.world].name }}</span>
+            <span class="kicker">{{ worlds[battleLevel.world].name }}</span>
             <h2>
               {{ dailyMode ? "每日挑战" : `第 ${level.label} 关` }}
               <small>{{
@@ -1062,7 +1185,7 @@ onBeforeUnmount(() => {
                   ? "种子 " + daily.date
                   : level.mode === "normal"
                     ? "庭院防线"
-                    : level.mode === "boss"
+                    : battleLevel.mode === "boss"
                       ? "最后的守护"
                       : "特别挑战"
               }}</small>
@@ -1108,7 +1231,7 @@ onBeforeUnmount(() => {
             </div>
             <div v-if="engine?.level.mode !== 'whack'" class="battle-seeds">
               <button
-                v-for="(id, i) in engine?.isBelt ? stats.belt : chosen"
+                v-for="(id, i) in engine?.isBelt ? stats.belt : battleCards"
                 :key="id + '-' + i"
                 class="battle-seed"
                 :class="{
@@ -1119,12 +1242,14 @@ onBeforeUnmount(() => {
                     (stats.sun < engine!.getDef(id).cost ||
                       stats.cooldowns[id] > 0),
                 }"
-                @click="selectSeed(id)"
+                @pointerdown="seedDown(id)"
+                @click="seedClick(id)"
+                @dragstart.prevent
                 :aria-label="'选择' + seedName(id)"
                 :aria-pressed="stats.selected === id"
               >
                 <span class="key">{{ i + 1 }}</span
-                ><img :src="seedPortrait(id)" :alt="seedName(id)" /><span>{{
+                ><img draggable="false" :src="seedPortrait(id)" :alt="seedName(id)" /><span>{{
                   seedName(id)
                 }}</span
                 ><strong>{{
@@ -1242,10 +1367,7 @@ onBeforeUnmount(() => {
                   ><span>剩余阳光 {{ engine?.sun || 0 }}</span
                   ><span v-if="engine?.settings.mowers"
                     >失去小推车
-                    {{
-                      engine.mowers.filter((m) => !m).length +
-                      engine.spareMowers.filter(Boolean).length
-                    }}</span
+                    {{ engine.mowersLost }}</span
                   >
                 </div>
                 <p
@@ -1310,12 +1432,12 @@ onBeforeUnmount(() => {
               {{ stats.paused ? "休息一下" : "庭院保卫中" }}</span
             >
             <div class="wave-track">
-              <span>{{ level.mode === "boss" ? "僵王生命" : "僵尸进攻" }}</span>
+              <span>{{ battleLevel.mode === "boss" ? "僵王生命" : "僵尸进攻" }}</span>
               <div>
                 <i
                   :style="{
                     width:
-                      (level.mode === 'boss'
+                      (battleLevel.mode === 'boss'
                         ? (stats.boss / (engine?.bossMax || 24000)) * 100
                         : stats.progress) + '%',
                   }"
@@ -1328,7 +1450,7 @@ onBeforeUnmount(() => {
                 ></b>
               </div>
               <b>{{
-                level.mode === "boss"
+                battleLevel.mode === "boss"
                   ? Math.max(0, Math.ceil(stats.boss))
                   : Math.round(stats.progress) + "%"
               }}</b>

@@ -22,5 +22,4 @@ const zombies: Record<string, number> = {
   imp: 0.67,
 };
 export const plantScale = (id: string) => plants[id] ?? 1;
-export const zombieScale = (id: string, levelId = 1) =>
-  levelId === 25 ? 0.67 : (zombies[id] ?? 1);
+export const zombieScale = (id: string) => zombies[id] ?? 1;

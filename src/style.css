@@ -418,6 +418,16 @@ h3 {
   border: 1px dashed #d7dbc2;
   border-radius: 12px;
   overflow: hidden;
+  cursor: pointer;
+  transition:
+    transform 0.15s ease,
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+.garden-tip:hover {
+  border-color: #aeb89b;
+  background: #fbfcf4;
+  transform: translateY(-1px);
 }
 .garden-tip > span {
   font-size: 10px;
@@ -939,6 +949,26 @@ footer i {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  position: relative;
+}
+.shop-thumb {
+  height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  background: linear-gradient(160deg, #fdfcf0, #e7ecd0);
+  overflow: hidden;
+}
+.shop-thumb img {
+  width: 70px;
+  height: 70px;
+  object-fit: contain;
+  transform: scale(1.08);
+}
+.shop-item button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 .shop-item strong {
   font-size: 13px;
@@ -958,6 +988,41 @@ footer i {
 }
 .shop-item button {
   align-self: flex-start;
+}
+.mower-mini,
+.slot-mini {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.mower-mini {
+  width: 54px;
+  height: 40px;
+  background:
+    radial-gradient(circle at 12px 28px, #2b383b 0 6px, transparent 7px),
+    radial-gradient(circle at 44px 28px, #2b383b 0 6px, transparent 7px),
+    linear-gradient(90deg, #cf4b35 0 44px, #f4c24a 44px 52px);
+  border-radius: 8px 8px 5px 5px;
+  box-shadow: 0 5px 0 #732f29;
+  transform: rotate(-3deg);
+}
+.slot-mini {
+  gap: 4px;
+}
+.slot-mini i {
+  display: block;
+  width: 18px;
+  height: 23px;
+  border: 2px solid #7e8961;
+  border-radius: 3px;
+  background: #fffef0;
+}
+.slot-mini i:nth-child(2) {
+  background: #eef4c8;
+}
+.seed-slot strong em {
+  display: block;
+  margin: 2px 0 0;
 }
 body.high-contrast .battle-seed,
 body.high-contrast .shovel {
