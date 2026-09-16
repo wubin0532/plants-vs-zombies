@@ -15,3 +15,7 @@ output/
 *.key
 .vscode/
 .idea/
+
+# Internal planning/audit docs and raw asset sources (keep local only)
+docs/
+assets-source/
