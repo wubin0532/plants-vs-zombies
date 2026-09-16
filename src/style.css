@@ -2602,3 +2602,42 @@ body.battle-fullscreen {
   .mechanic-strip button { min-height: 44px; }
   .lesson-card { padding: 18px; }
 }
+
+/* Chapter preparation reads like labels on the gardener's seed bag. */
+.seed-needs { display: flex; flex-wrap: wrap; gap: 7px; margin: 18px 0 8px; }
+.seed-needs > span { display: flex; align-items: center; gap: 6px; padding: 6px 9px; border: 1px solid #bcab84; border-radius: 8px; color: #765b36; background: #fff6dd; font-size: 12px; }
+.seed-needs > .ready { color: #38583e; border-color: #99ad83; background: #e9efd9; }
+.seed-needs small { opacity: .8; }
+.combat-guide { margin: 16px 0; padding: 14px 18px; border: 1px solid #b9c59a; border-radius: 12px; background: #f0f1df; color: #344e38; }
+.combat-guide summary { cursor: pointer; font-weight: 700; }
+.combat-guide h3 { margin: 15px 0 4px; font-size: 15px; }
+.combat-guide p { margin: 0; line-height: 1.7; }
+.fog-timer { color: #355f66; font-weight: 700; white-space: nowrap; }
+.fog-clear-badge { display: none; pointer-events: none; position: absolute; z-index: 3; top: 8px; right: 10px; padding: 5px 9px; border: 1px solid #b8d5c7; border-radius: 8px; background: #203d42e8; color: #f0edcd; font-size: 12px; }
+.immersive .fog-clear-badge { display: block; }
+@media (max-height: 600px) and (orientation: landscape) {
+  .app-shell:not(.immersive) .game-frame .seed-tray { grid-column: 1; grid-row: 1 / 3; }
+  .app-shell:not(.immersive) .game-frame .mechanic-strip { grid-column: 2; grid-row: 1; min-width: 0; padding: 2px 6px; font-size: 10px; }
+  .app-shell:not(.immersive) .game-frame .canvas-wrap { grid-column: 2; grid-row: 2; }
+  .mechanic-strip > span { min-width: 0; }
+  .mechanic-strip button { min-height: 32px; }
+  .garden-tool { flex: 0 0 44px; width: 100%; min-height: 44px; padding: 2px; font-size: 10px; gap: 1px; }
+  .garden-tool strong { font-size: 11px; }
+  .garden-tool small { display: none; }
+  .shovel { min-height: 44px; }
+}
+@media (max-height: 600px) and (orientation: landscape) {
+  .app-shell:not(.immersive) .game-frame {
+    height: calc(100dvh - 50px);
+    width: min(100%, calc((100dvh - 111px) * 1.73913 + 72px));
+    grid-template-rows: 32px minmax(0, 1fr) 23px;
+  }
+  .app-shell:not(.immersive) .game-frame .seed-tray { height: auto; overflow: hidden; }
+  .app-shell:not(.immersive) .game-frame .canvas-wrap { min-height: 0; align-self: center; }
+  .app-shell:not(.immersive) .game-frame .game-status { grid-row: 3; }
+  .app-shell:not(.immersive) .coin-counter { min-height: 28px; height: 28px; flex: 0 0 28px; }
+  .app-shell:not(.immersive) .coin-counter::after { display: none; }
+  .app-shell:not(.immersive) .coin-counter strong { font-size: 13px; }
+  .app-shell:not(.immersive) .coin-icon { width: 15px; height: 15px; margin: 0; }
+  .app-shell:not(.immersive) .battle-seeds { align-items: center; }
+}

@@ -247,7 +247,7 @@ export const plants: PlantDef[] = [
     "torch",
     28,
     "#bb7146",
-    "把穿过的普通豌豆变成伤害更高的火球。",
+    "普通豌豆过火炬变双倍伤害火球；冰豌豆先化成普通豌豆，经过另一株才变火球。火焰解除冰控，保留黄油与天气效果。",
   ),
   p(
     "tallnut",
@@ -269,7 +269,7 @@ export const plants: PlantDef[] = [
     "直接种在水面，攻击附近的僵尸。",
     { damage: 20, interval: 1.4, cooldown: 30 },
   ),
-  p("lantern", "路灯花", 25, "light", 32, "#f4cb56", "照亮浓雾中的一片区域。", {
+  p("lantern", "路灯花", 25, "light", 31, "#f4cb56", "照亮左右各两列、上下各一行；照明范围内可看清僵尸与血条。", {
     cooldown: 30,
   }),
   p(
@@ -676,56 +676,40 @@ export const levels: Level[] = Array.from({ length: 50 }, (_, i) => {
 });
 export const isNight = (scene: string) => scene === "night" || scene === "fog";
 
-/** 选卡推荐：克制优先 → 场景必需 → 经济植物 → 新解锁与填充补位。 */
-export function recommendCards(
-  level: Level,
-  unlocked: string[],
-  slots: number,
-): string[] {
-  const has = (id: string) => unlocked.includes(id);
+/** Reserve economy, terrain support and sustained damage before situational counters. */
+export function recommendCards(level: Level, unlocked: string[], slots: number): string[] {
   const picked: string[] = [];
+  const has = (id: string) => unlocked.includes(id) && !!plantById[id] && !plantById[id].upgrade;
   const push = (...ids: string[]) => {
-    for (const id of ids)
-      if (has(id) && !picked.includes(id) && !plantById[id]?.upgrade)
-        picked.push(id);
+    for (const id of ids) if (has(id) && !picked.includes(id)) picked.push(id);
   };
+  const first = (...ids: string[]) => { const id = ids.find(has); if (id) push(id); };
   const night = isNight(level.scene);
-  // 1. 克制本关敌人的植物
-  for (const enemy of level.enemies)
-    push(...(zombieById[enemy]?.counters ?? []));
-  // 2. 场景必需
+  if (night) first("sunshroom", "sunflower"); else push("sunflower");
   if (level.rows === 6) push("lily");
-  if (level.scene === "fog") push("lantern", "blover");
-  if (night) push("grave");
-  if (level.scene === "roof") push("pot", "umbrella");
-  // 3. 经济植物：夜晚优先阳光菇，未解锁时退回向日葵
-  if (night) push(has("sunshroom") ? "sunshroom" : "sunflower");
-  else push("sunflower");
-  // 4. 本关新解锁的植物
+  if (level.scene === "roof") { push("pot"); first("cabbage", "kernel", "melon"); }
+  else if (night) first("fume", "pea", "puff");
+  else first("pea", "repeater");
+  if (level.scene === "fog" && level.mode !== "vases") push("lantern");
+  if (level.enemies.includes("balloon")) first("cactus", "blover");
+  if (level.scene === "night") push("grave");
+  // One counter per enemy leaves room for an actual playable defense.
+  for (const enemy of level.enemies) {
+    const counters = zombieById[enemy]?.counters ?? [];
+    if (!counters.some(id => picked.includes(id))) first(...counters);
+  }
   for (const plant of plants) if (plant.unlock === level.id) push(plant.id);
-  // 5. 按场景填充剩余槽位
-  push(
-    ...(level.scene === "night"
-      ? ["puff", "fume", "wallnut", "scaredy", "hypno", "ice", "doom"]
-      : level.scene === "pool"
-        ? ["pea", "wallnut", "kelp", "squash", "snowpea", "cherry", "three"]
-        : level.scene === "fog"
-          ? ["puff", "fume", "sea", "wallnut", "cactus", "star"]
-          : level.scene === "roof"
-            ? ["cabbage", "kernel", "wallnut", "cherry", "melon", "jalapeno"]
-            : [
-                "pea",
-                "wallnut",
-                "potato",
-                "snowpea",
-                "cherry",
-                "repeater",
-                "chomper",
-                "arc",
-              ]),
-  );
-  return picked.slice(0, Math.max(1, slots));
+  if (night) push("puff", "wallnut", "ice", "arc", "sea", "blover");
+  else push("wallnut", "snowpea", "cherry", "arc", "repeater");
+  return picked.slice(0, Math.max(0, slots));
 }
+
+export const combatGuide = [
+  { title: "冰火相克", text: "冰豌豆过一株火炬变普通豌豆，过另一株才变火球。火球与火爆辣椒解除冰控，保留黄油定身和天气减速；普通爆炸不融冰。" },
+  { title: "冰电爆发", text: "电击冰控目标额外造成 100 伤害，并向附近最多 3 个敌人各传导 40 伤害。同一目标冷却 4 秒，冷却中不消耗冰控。" },
+  { title: "护甲与目标", text: "头盔先吸收伤害；烟雾、投掷直击和投掷溅射越过铁栅门。常规溅射不伤飞行或地下敌人，投手仍能攻击潜水僵尸。" },
+];
+
 export const isMushroom = (id: string) =>
   [
     "puff",

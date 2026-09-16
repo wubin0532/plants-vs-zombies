@@ -1,4 +1,4 @@
-import { applyControl, tickControls, consumeIce, electricTarget, conductionTargets } from "./elements";
+import { applyControl, tickControls, consumeIce, electricTarget, conductionTargets, attackTarget, projectileTarget, isLob } from "./elements";
 import { WIND_DURATION, RAIN_DURATION, TOKEN_LIFETIME, tokenPose } from "./ambient";
 import { jumpHeight } from "./animation";
 import { plantSound, type SoundEvent, type SoundKind } from "./audio";
@@ -127,6 +127,8 @@ export type Shot = {
   plant?: number;
   /** 杨桃等固定方向弹丸的行漂移速度（格/秒）。 */
   rowSpeed?: number;
+  /** Each trunk transforms a projectile only once, including at slow simulation speeds. */
+  torches?: number[];
 };
 export type Token = {
   uid: number;
@@ -270,10 +272,8 @@ export class Engine {
     this.rng = seed || 1;
     this.mowers = Array(this.level.rows).fill(this.settings.mowers);
     this.spareMowers = Array(this.level.rows).fill(false);
-    if (isNight(this.level.scene)) {
-      // 迷雾关第 2、3 行是水路，墓碑只落在陆行。
-      const graveRows =
-        this.level.scene === "fog" ? [0, 1, 4, 5] : [0, 1, 2, 3, 4];
+    if (this.level.scene === "night") {
+      const graveRows = [0, 1, 2, 3, 4];
       const graveCount = Math.min(2 + this.level.stage, 8);
       for (let i = 0; i < graveCount; i++)
         this.tiles.push({
@@ -285,6 +285,8 @@ export class Engine {
     }
     if (isNight(this.level.scene) && this.level.mode === "normal")
       this.say("夜晚没有天降阳光，蘑菇们更活跃；向日葵在夜里生产变慢");
+    if (this.level.scene === "fog" && this.level.mode === "normal")
+      this.say("夜间泳池没有天降阳光：睡莲承载水路火力，路灯花照亮右侧迷雾");
     if (this.level.scene === "roof")
       for (let r = 0; r < 5; r++)
         for (let c = 0; c < 3; c++) this.addPlant("pot", r, c);
@@ -1235,7 +1237,7 @@ export class Engine {
         }
       }
       this.warnDanger(id);
-      if (this.spawned === this.schedule.length && isNight(this.level.scene)) {
+      if (this.spawned === this.schedule.length && this.level.scene === "night") {
         const graves = this.tiles.filter((tile) => tile.type === "grave");
         if (graves.length) {
           this.say("墓碑里爬出了僵尸！", "alert");
@@ -1280,11 +1282,8 @@ export class Engine {
           (z) =>
             z.row === p.row &&
             z.x > p.col - 0.2 &&
-            (!z.flying || ["cactus", "cattail"].includes(p.id)) &&
-            (z.id !== "snorkel" ||
-              z.x < p.col + 0.65 ||
-              z.action === "eat" ||
-              d.kind === "lob"),
+            attackTarget(z, ["cactus", "cattail"].includes(p.id),
+              z.x < p.col + 0.65 || d.kind === "lob"),
         )
         .sort((a, b) => a.x - b.x);
       if (d.kind === "sun" && p.timer <= 0) {
@@ -1338,7 +1337,10 @@ export class Engine {
         }
         if (d.kind === "jalapeno") {
           for (const z of targets)
-            if (z.row === p.row) this.damage(z, 1800, true);
+            if (z.hp > 0 && z.row === p.row) {
+              consumeIce(z);
+              this.damage(z, 1800, true);
+            }
           this.tiles = this.tiles.filter(
             (t) => !(t.type === "ice" && t.row === p.row),
           );
@@ -1469,7 +1471,7 @@ export class Engine {
         if (d.kind === "fume" || d.kind === "gloom") {
           const group = targets.filter(
             (z) =>
-              !z.flying &&
+              attackTarget(z) &&
               Math.abs(z.row - p.row) < (d.kind === "gloom" ? 2 : 1) &&
               (d.kind === "gloom"
                 ? Math.abs(z.x - p.col) < 1.5
@@ -1663,15 +1665,13 @@ export class Engine {
         continue;
       }
       const homing = s.type === "cattail";
-      const lob = ["cabbage", "kernel", "butter", "melon", "winter"].includes(
-        s.type,
-      );
+      const lob = isLob(s.type);
       let target = this.zombies.find(
-        (z) => z.uid === s.target && z.hp > 0 && !z.ally,
+        (z) => z.uid === s.target && projectileTarget(z, s.type, !!s.snorkel),
       );
       if (homing && !target)
         target = this.zombies.find(
-          (z) => z.hp > 0 && !z.ally && !z.underground,
+          (z) => projectileTarget(z, s.type),
         );
       if (homing && target) {
         s.target = target.uid;
@@ -1694,46 +1694,31 @@ export class Engine {
       const z = this.zombies
         .filter(
           (z) =>
-            z.hp > 0 &&
-            !z.ally &&
-            !z.underground &&
-            (!z.flying || ["cactus", "cattail"].includes(s.type)) &&
-            // 潜水的僵尸不会被普通直射弹丸挡住；投掷、追踪与近距离瞄准它的弹丸除外。
-            (z.id !== "snorkel" ||
-              lob ||
-              homing ||
-              s.snorkel ||
-              z.action === "eat") &&
+            projectileTarget(z, s.type, !!s.snorkel) &&
             Math.abs(z.row - s.row) < 0.35 &&
             z.x >= Math.min(previous, s.x) - 0.18 &&
             z.x <= Math.max(previous, s.x) + 0.18,
         )
         .sort((a, b) => Math.abs(a.x - previous) - Math.abs(b.x - previous))[0];
-      const torch = this.plants.find(
-        (p) =>
-          p.id === "torch" &&
-          p.row === s.row &&
-          p.col >= Math.min(previous, s.x) - 0.15 &&
-          p.col <= Math.max(previous, s.x) + 0.15,
-      );
-      if (
-        torch &&
-        ["pea", "repeater", "three", "gatling", "split"].includes(s.type)
-      ) {
-        s.damage *= 2;
-        s.type = "fire";
+      // Resolve crossed trunks in travel order, stopping at the first collision.
+      const endX = z ? z.x : s.x;
+      const torches = this.plants.filter(p => p.id === "torch" && p.hp > 0 &&
+        p.row === s.row && !s.torches?.includes(p.uid) &&
+        p.col >= Math.min(previous, endX) - 0.15 &&
+        p.col <= Math.max(previous, endX) + 0.15)
+        .sort((a, b) => s.direction * (a.col - b.col));
+      for (const torch of torches) {
+        (s.torches ??= []).push(torch.uid);
+        if (s.type === "snowpea") s.type = "pea";
+        else if (["pea", "repeater", "three", "gatling", "split"].includes(s.type)) {
+          s.damage *= 2;
+          s.type = "fire";
+        }
       }
       if (z) {
         s.hit = true;
-        this.damage(
-          z,
-          s.damage,
-          false,
-          z.id === "screen" &&
-            ["cabbage", "kernel", "butter", "melon", "winter"].includes(
-              s.type,
-            ),
-        );
+        if (s.type === "fire") consumeIce(z);
+        this.damage(z, s.damage, false, isLob(s.type));
         if (["snowpea", "winter"].includes(s.type)) applyControl(z, "iceSlow", 10);
         if (s.type === "butter") applyControl(z, "otherFreeze", 3);
         if (s.type === "cactus" || s.type === "cattail") z.flying = false;
@@ -1741,11 +1726,12 @@ export class Engine {
           for (const other of this.zombies)
             if (
               other.uid !== z.uid &&
-              !other.ally &&
+              projectileTarget(other, s.type) &&
               Math.abs(other.x - z.x) < 1 &&
               Math.abs(other.row - z.row) <= 1
             ) {
-              this.damage(other, s.damage / 3);
+              if (s.type === "fire") consumeIce(other);
+              this.damage(other, s.damage / 3, false, isLob(s.type));
               if (s.type === "winter") applyControl(other, "iceSlow", 10);
             }
       }

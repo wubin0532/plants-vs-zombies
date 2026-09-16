@@ -19,6 +19,7 @@ import {
   isMushroom,
   isNight,
   recommendCards,
+  combatGuide,
 } from "./game/content";
 import type { PlantDef, ZombieDef } from "./game/content";
 import { plantImage, zombieImage, gardenImage, bowlImage } from "./game/art";
@@ -79,10 +80,24 @@ const levelHint = computed(() => {
   const l = level.value;
   if (l.id === 1) return "第一关只有豌豆射手：先点落下的阳光，再守住路线。";
   if (l.world === 1) return "夜间没有自然掉落的阳光。记得带上阳光菇。";
-  if (l.world === 2 || l.world === 3)
+  if (l.world === 3) return l.mode === "vases"
+    ? "全场可见：先辨认冰、电标记罐，组合火力守住六条路线。"
+    : "夜间泳池没有天降阳光。睡莲承载水路火力，路灯花照亮迷雾；留意气球与后方矿工。";
+  if (l.world === 2)
     return "水路种植陆生植物前，需要先放置睡莲。";
   if (l.world === 4) return "屋顶需要花盆。投手的抛物线能越过斜坡。";
   return "先建立阳光生产，再用射手与坚果搭起防线。";
+});
+const seedNeeds = computed(() => {
+  const l = level.value;
+  const needs: { label: string; ready: boolean }[] = [];
+  if (l.mode !== "normal") return needs;
+  if (l.id > 1) needs.push({ label: "阳光生产", ready: chosen.value.some(id => ["sunflower", "sunshroom", "twin"].includes(id)) });
+  if (l.rows === 6) needs.push({ label: "水路 · 睡莲", ready: chosen.value.includes("lily") });
+  if (l.scene === "roof") needs.push({ label: "屋顶 · 花盆", ready: chosen.value.includes("pot") });
+  if (l.scene === "fog") needs.push({ label: "照明 · 路灯花", ready: chosen.value.includes("lantern") });
+  if (l.enemies.includes("balloon")) needs.push({ label: "防空", ready: chosen.value.some(id => ["cactus", "blover"].includes(id)) });
+  return needs;
 });
 const previewSettings = computed(() =>
   battleSettings(level.value, save.data.options),
@@ -169,6 +184,7 @@ const stats = computed(() => {
     toolHint: e?.toolHint ?? "",
     hammer: e?.hammer ?? "ice",
     reactions: e?.reactions ?? 0,
+    fogSeconds: e?.level.scene === "fog" && e.level.mode !== "vases" ? Math.ceil(e.fogClear) : 0,
     weather: e && e.windUntil > e.time ? "寒风" : e && e.rainUntil > e.time ? "阳光雨" : "",
     weatherSeconds: e ? Math.ceil(Math.max(e.windUntil, e.rainUntil) - e.time) : 0,
     sun: e?.sun || 0,
@@ -243,12 +259,9 @@ const battleCards = computed(() =>
   dailyMode.value ? daily.value.cards : chosen.value,
 );
 const battleLevel = computed(() => engine.value?.level ?? level.value);
-const recommended = computed(
-  () =>
-    new Set(
-      [...level.value.enemies.flatMap((id) => zombieById[id]?.counters ?? []), ...(level.value.id >= 8 ? ["snowpea", "arc"] : [])],
-    ),
-);
+const recommended = computed(() => new Set(
+  recommendCards(level.value, available.value.map(p => p.id), slots.value),
+));
 // 夜晚与迷雾关没有天降阳光，向日葵类生产效率降低，选卡界面给出提示。
 const lowSun = computed(
   () => new Set(isNight(level.value.scene) ? ["sunflower", "twin"] : []),
@@ -705,9 +718,9 @@ function keyboard(e: KeyboardEvent) {
       engine.value.say("再按一次 R 重新开始本关");
     }
   }
-  if (/^[1-9]$/.test(e.key)) {
+  if (/^[0-9]$/.test(e.key)) {
     const ids = engine.value?.isBelt ? stats.value.belt : battleCards.value;
-    const id = ids[Number(e.key) - 1];
+    const id = ids[e.key === "0" ? 9 : Number(e.key) - 1];
     if (id) selectSeed(id);
   }
 }
@@ -1112,6 +1125,11 @@ onBeforeUnmount(() => {
                 /><span>{{ zombies.find((z) => z.id === id)?.name }}</span>
               </div>
             </div>
+            <div v-if="seedNeeds.length" class="seed-needs" aria-label="本关准备">
+              <span v-for="need in seedNeeds" :key="need.label" :class="{ ready: need.ready }">
+                {{ need.ready ? '✓' : '○' }} {{ need.label }}<small>{{ need.ready ? '已带' : '未带' }}</small>
+              </span>
+            </div>
             <p class="hint">
               {{ levelHint }}
             </p>
@@ -1195,7 +1213,7 @@ onBeforeUnmount(() => {
                 :aria-label="'选择' + seedName(id)"
                 :aria-pressed="stats.selected === id"
               >
-                <span class="key">{{ i + 1 }}</span
+                <span class="key">{{ (i + 1) % 10 }}</span
                 ><img draggable="false" :src="seedPortrait(id)" :alt="seedName(id)" /><span>{{
                   seedName(id)
                 }}</span
@@ -1234,10 +1252,12 @@ onBeforeUnmount(() => {
             </button>
           </div>
           <div v-if="engine?.toolsUnlocked" class="mechanic-strip">
+            <span v-if="stats.fogSeconds > 0" class="fog-timer">清雾剩余 {{ stats.fogSeconds }} 秒</span>
             <span>{{ stats.selected === 'tool' ? stats.toolHint : engine?.level.mode === 'whack' ? '先冰后电 · Q / E 切锤' : '冰电爆发 ' + stats.reactions + ' 次 · T 使用工具' }}</span>
             <button v-if="lesson" @click="showLesson">玩法说明</button>
           </div>
           <div class="canvas-wrap">
+            <div v-if="stats.fogSeconds > 0" class="fog-clear-badge">清雾 {{ stats.fogSeconds }} 秒</div>
             <div v-if="stats.weather" class="weather-badge" :class="{ warm: stats.weather === '阳光雨' }">
               <span>{{ stats.weather }}</span><small>{{ stats.weatherSeconds }} 秒 · {{ stats.weather === '寒风' ? '全场减速' : '阳光加速' }}</small>
             </div>
@@ -1513,6 +1533,10 @@ onBeforeUnmount(() => {
               {{ achievementDefs.length }}
             </button>
           </div>
+          <details v-if="tab !== 'achievements'" class="combat-guide">
+            <summary>战斗手册 · 冰火、冰电与护甲</summary>
+            <div v-for="rule in combatGuide" :key="rule.title"><h3>{{ rule.title }}</h3><p>{{ rule.text }}</p></div>
+          </details>
           <div v-if="tab === 'achievements'" class="almanac-grid">
             <article
               v-for="a in achievementDefs"

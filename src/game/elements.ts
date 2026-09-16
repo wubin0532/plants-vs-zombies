@@ -20,9 +20,18 @@ export function consumeIce(z: Zombie) {
   z.freeze = z.otherFreeze ?? 0;
   return true;
 }
+/** Shared eligibility; attack families explicitly opt into air or submerged targets. */
+export function attackTarget(z: Zombie, airborne = false, submerged = false) {
+  return z.hp > 0 && !z.ally && !z.underground && (airborne || !z.flying) &&
+    (submerged || z.id !== 'snorkel' || z.action === 'eat');
+}
+export const isLob = (type: string) => ['cabbage', 'kernel', 'butter', 'melon', 'winter'].includes(type);
+export function projectileTarget(z: Zombie, type: string, aimedUnderwater = false) {
+  return attackTarget(z, ['cactus', 'cattail'].includes(type),
+    isLob(type) || type === 'cattail' || aimedUnderwater);
+}
 export function electricTarget(z: Zombie) {
-  return z.hp > 0 && !z.ally && !z.underground && !z.flying &&
-    (z.id !== 'snorkel' || z.action === 'eat');
+  return attackTarget(z);
 }
 export function conductionTargets(origin: Zombie, enemies: Zombie[]) {
   return enemies.filter(z => z.uid !== origin.uid && electricTarget(z) &&

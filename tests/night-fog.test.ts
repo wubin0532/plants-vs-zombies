@@ -37,11 +37,11 @@ describe("墓碑", () => {
   it("墓碑吞噬者第 12 关解锁", () => {
     expect(plantById.grave.unlock).toBe(12);
   });
-  it("迷雾关也生成墓碑，且不落在水路行", () => {
+  it("第四章不生成墓碑，第二章保留墓碑", () => {
     const e = new Engine(31, []);
     const graves = e.tiles.filter((t) => t.type === "grave");
-    expect(graves.length).toBeGreaterThan(0);
-    expect(graves.every((t) => [0, 1, 4, 5].includes(t.row))).toBe(true);
+    expect(graves).toHaveLength(0);
+    expect(new Engine(11, []).tiles.some(t => t.type === "grave")).toBe(true);
   });
   it("最终波墓碑爬出僵尸并播报警告，前期关卡均为普通僵尸", () => {
     const e = new Engine(11, []);
@@ -112,13 +112,13 @@ describe("选卡推荐", () => {
     const rec = recommendCards(level, all, 8);
     expect(rec.some((id) => ["cactus", "blover"].includes(id))).toBe(true);
   });
-  it("迷雾关推荐阳光菇、路灯花与墓碑吞噬者，不推荐向日葵", () => {
+  it("迷雾关推荐阳光菇与路灯花，不推荐墓碑吞噬者或向日葵", () => {
     const level = levels[30];
     expect(level.scene).toBe("fog");
     const rec = recommendCards(level, all, 8);
     expect(rec).toContain("sunshroom");
     expect(rec).toContain("lantern");
-    expect(rec).toContain("grave");
+    expect(rec).not.toContain("grave");
     expect(rec).not.toContain("sunflower");
   });
   it("夜晚关推荐墓碑吞噬者与阳光菇", () => {
