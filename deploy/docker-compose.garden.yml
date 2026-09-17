@@ -1,0 +1,19 @@
+# 庭院保卫战 · 账号与云存档后端
+# 与现有容器并存：宿主机端口 8787 -> 容器 8787
+services:
+  garden-api:
+    image: node:24-alpine
+    container_name: garden-api
+    working_dir: /app
+    volumes:
+      # /vol1/1000/Docker/garden-server 里直接放 store.mjs / auth.mjs / index.mjs
+      - /vol1/1000/Docker/garden-server:/app/server:ro
+      - /vol1/1000/Docker/Data:/data
+    command: ["node", "--no-warnings", "/app/server/index.mjs"]
+    environment:
+      - PORT=8787
+      - DATA_DIR=/data/garden
+      - MAX_USERS=5
+    ports:
+      - "8787:8787"
+    restart: unless-stopped

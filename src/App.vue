@@ -30,7 +30,10 @@ import { mountGame } from "./game/scene";
 import { GardenAudio } from "./game/audio";
 import type { SoundKind } from "./game/audio";
 import { seedSlotPriceFor, useSave } from "./store";
+import { useAuth } from "./auth";
 const save = useSave();
+const auth = useAuth();
+void auth.refresh();
 save.load();
 {
   const fresh = checkAchievements(save.data);
@@ -601,6 +604,47 @@ function pause() {
     tick.value++;
   }
 }
+const authName = ref("");
+const authPassword = ref("");
+const authMode = ref<"login" | "register">("login");
+const userName = computed(() => auth.user?.name ?? "");
+const cloudLabel = computed(() => {
+  if (!auth.loggedIn) return "未登录";
+  if (save.cloud === "syncing") return "同步中…";
+  if (save.cloud === "synced") return "已同步";
+  if (save.cloud === "error") return "同步失败";
+  return "等待同步";
+});
+function openAccount(mode: "login" | "register") {
+  authMode.value = mode;
+  auth.error = "";
+  modal.value = "account";
+  if (engine.value) engine.value.paused = true;
+}
+async function submitAuth() {
+  const ok =
+    authMode.value === "login"
+      ? await auth.login(authName.value, authPassword.value)
+      : await auth.register(authName.value, authPassword.value);
+  if (!ok) return;
+  authPassword.value = "";
+  modal.value = "";
+  await save.syncOnLogin();
+  audio.enabled = save.data.sound;
+  audio.volume = save.data.volume;
+  audio.mix = { ...save.data.mix };
+  levelId.value = Math.min(50, save.data.unlocked);
+}
+async function signOut() {
+  await auth.logout();
+  save.warning = "已退出登录，进度仍保存在本机。";
+}
+async function uploadSave() {
+  await save.pushCloud();
+}
+async function downloadSave() {
+  await save.pullCloud();
+}
 function exportSave() {
   const blob = new Blob([JSON.stringify(save.data, null, 2)], {
     type: "application/json",
@@ -780,7 +824,10 @@ onBeforeUnmount(() => {
         </button>
       </nav>
       <div class="top-tools">
-        <span class="save-dot"></span><span class="saved">本地存档</span
+        <span class="save-dot" :class="{ online: auth.loggedIn }"></span
+        ><span class="saved">{{
+          auth.loggedIn ? userName + " · " + cloudLabel : "本地存档"
+        }}</span
         ><button
           class="icon-button"
           aria-label="设置"
@@ -1684,10 +1731,32 @@ onBeforeUnmount(() => {
           </div>
           <div class="setting-row">
             <span
+              >用户账号<small v-if="!auth.loggedIn"
+                >登录后可在不同设备同步进度</small
+              ><small v-else>已登录：{{ userName }} · {{ cloudLabel }}</small></span
+            ><button
+              v-if="!auth.loggedIn"
+              class="plain"
+              @click="openAccount('login')"
+            >
+              登录 / 注册</button
+            ><button v-else class="plain" @click="signOut">退出登录</button>
+          </div>
+          <div v-if="auth.loggedIn" class="setting-row">
+            <span>云端同步<small>“上传本机”会覆盖云端，“下载云端”会覆盖本机</small></span
+            ><span class="save-buttons"
+              ><button class="plain" @click="uploadSave">上传本机</button
+              ><button class="plain" @click="downloadSave">下载云端</button></span
+            >
+          </div>
+          <div class="setting-row">
+            <span
               >冒险存档<small
                 >已完成 {{ save.data.completed.length }} / 50 关</small
               ></span
-            ><span class="pill">保存在本机</span>
+            ><span class="pill">{{
+              auth.loggedIn ? "已接入账号" : "保存在本机"
+            }}</span>
           </div>
           <p class="hint">
             进度保存在当前浏览器中。清除网站数据或更换设备前，请先导出备份。进行中的战局不会保存。
@@ -1705,6 +1774,73 @@ onBeforeUnmount(() => {
           </div>
           <p v-if="save.warning" role="status" class="notice">
             {{ save.warning }}
+          </p></template
+        >
+        <template v-if="modal === 'account'"
+          ><p class="kicker">YOUR GARDEN ACCOUNT</p>
+          <h2>{{ authMode === "login" ? "回到你的庭院" : "新建一个庭院账号" }}</h2>
+          <div class="world-tabs">
+            <button
+              :class="{ active: authMode === 'login' }"
+              @click="
+                authMode = 'login';
+                auth.error = '';
+              "
+            >
+              登录</button
+            ><button
+              :class="{ active: authMode === 'register' }"
+              @click="
+                authMode = 'register';
+                auth.error = '';
+              "
+            >
+              注册
+            </button>
+          </div>
+          <form class="auth-form" @submit.prevent="submitAuth">
+            <label
+              ><span>用户名</span
+              ><input
+                v-model.trim="authName"
+                :disabled="auth.busy"
+                autocomplete="username"
+                maxlength="20"
+                placeholder="1-20 位，不含空格"
+            /></label>
+            <label
+              ><span>密码</span
+              ><input
+                v-model="authPassword"
+                type="password"
+                :disabled="auth.busy"
+                :autocomplete="
+                  authMode === 'login' ? 'current-password' : 'new-password'
+                "
+                maxlength="128"
+                placeholder="至少 4 位"
+            /></label>
+            <p v-if="auth.error" role="status" class="notice">
+              {{ auth.error }}
+            </p>
+            <div class="save-buttons">
+              <button
+                class="primary"
+                type="submit"
+                :disabled="auth.busy || !authName || authPassword.length < 4"
+              >
+                {{
+                  auth.busy
+                    ? "请稍候…"
+                    : authMode === "login"
+                      ? "登录"
+                      : "注册并登录"
+                }}
+              </button>
+            </div>
+          </form>
+          <p class="hint">
+            登录后进度保存到账号，可在不同设备继续游戏。退出登录不会删除本机存档。
           </p></template
         >
       </section>

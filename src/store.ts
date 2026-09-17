@@ -3,7 +3,9 @@ import {
   normalizeOptions,
   type BattleOptions,
 } from "./game/difficulty";
-import { defineStore } from "pinia";
+import { defineStore, getActivePinia } from "pinia";
+import { useAuth } from "./auth";
+import { ApiError, api } from "./api";
 export type Save = {
   version: 2;
   tutorialSeen: string[];
@@ -32,6 +34,7 @@ export type Save = {
     settings: string;
   }[];
 };
+export type CloudState = "idle" | "syncing" | "synced" | "error";
 export const initial = (): Save => ({
   version: 2,
   tutorialSeen: [],
@@ -174,10 +177,18 @@ export function validateSave(data: unknown): Save {
   };
 }
 const key = "pvz-garden-save-v1";
+const localAtKey = "pvz-garden-save-local-at";
+let pushTimer: number | undefined;
+let suppressPush = false;
 export const seedSlotPriceFor = (seedSlots: number) =>
   seedSlots === 0 ? 1500 : seedSlots < 4 ? 2500 : 5000;
 export const useSave = defineStore("save", {
-  state: () => ({ data: initial(), warning: "" }),
+  state: () => ({
+    data: initial(),
+    warning: "",
+    cloud: "idle" as CloudState,
+    cloudAt: 0,
+  }),
   actions: {
     load() {
       try {
@@ -190,8 +201,101 @@ export const useSave = defineStore("save", {
     persist() {
       try {
         localStorage.setItem(key, JSON.stringify(this.data));
+        localStorage.setItem(localAtKey, String(Date.now()));
       } catch {
         this.warning = "浏览器未能保存进度，请导出存档备份。";
+      }
+      this.scheduleCloudPush();
+    },
+    scheduleCloudPush() {
+      if (!getActivePinia() || suppressPush) return;
+      const auth = useAuth(getActivePinia()!);
+      if (!auth.loggedIn) return;
+      if (typeof window === "undefined") return;
+      clearTimeout(pushTimer);
+      pushTimer = window.setTimeout(() => {
+        void this.pushCloud();
+      }, 2000);
+    },
+    async pushCloud() {
+      if (!getActivePinia()) return;
+      const auth = useAuth(getActivePinia()!);
+      if (!auth.loggedIn) return;
+      clearTimeout(pushTimer);
+      this.cloud = "syncing";
+      try {
+        const { updatedAt } = await api.putSave(this.data);
+        this.cloudAt = updatedAt;
+        this.cloud = "synced";
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 401) {
+          auth.user = null;
+          this.cloud = "idle";
+          return;
+        }
+        this.cloud = "error";
+        this.warning = "云端保存失败：" + (error as Error).message;
+      }
+    },
+    async pullCloud() {
+      if (!getActivePinia()) return false;
+      const auth = useAuth(getActivePinia()!);
+      if (!auth.loggedIn) return false;
+      this.cloud = "syncing";
+      try {
+        const { save: cloudSave } = await api.getSave();
+        if (!cloudSave) {
+          this.cloud = "synced";
+          return false;
+        }
+        suppressPush = true;
+        try {
+          this.data = validateSave(cloudSave.data);
+          localStorage.setItem(key, JSON.stringify(this.data));
+          localStorage.setItem(localAtKey, String(Date.now()));
+          this.cloudAt = cloudSave.updatedAt;
+        } finally {
+          suppressPush = false;
+        }
+        this.cloud = "synced";
+        return true;
+      } catch (error) {
+        suppressPush = false;
+        this.cloud = "error";
+        this.warning = "云端读取失败：" + (error as Error).message;
+        return false;
+      }
+    },
+    async syncOnLogin() {
+      if (!getActivePinia()) return;
+      const auth = useAuth(getActivePinia()!);
+      if (!auth.loggedIn) return;
+      this.cloud = "syncing";
+      try {
+        const { save: cloudSave } = await api.getSave();
+        const localAt = Number(localStorage.getItem(localAtKey) ?? 0) || 0;
+        if (!cloudSave) {
+          await this.pushCloud();
+          return;
+        }
+        if (cloudSave.updatedAt > localAt) {
+          suppressPush = true;
+          try {
+            this.data = validateSave(cloudSave.data);
+            localStorage.setItem(key, JSON.stringify(this.data));
+            localStorage.setItem(localAtKey, String(Date.now()));
+            this.cloudAt = cloudSave.updatedAt;
+          } finally {
+            suppressPush = false;
+          }
+          this.cloud = "synced";
+        } else {
+          await this.pushCloud();
+        }
+      } catch (error) {
+        suppressPush = false;
+        this.cloud = "error";
+        this.warning = "云端同步失败：" + (error as Error).message;
       }
     },
     win(level: number, coins: number) {

@@ -1,6 +1,6 @@
 # 庭院保卫战
 
-基于 Vue 3、TypeScript、Vite、Phaser 3 的中文卡通塔防游戏。纯静态网页，游戏状态保存在玩家浏览器，可以部署到 Nginx。
+基于 Vue 3、TypeScript、Vite、Phaser 3 的中文卡通塔防游戏。前端是纯静态网页，游戏状态默认保存在玩家浏览器；可选启用自带的零依赖 Node 后端，用文件存储实现 1~5 个账号的登录与云存档。
 
 ## 运行
 
@@ -19,7 +19,61 @@ npm run build
 npm run preview
 ```
 
-将 `dist/` 中的文件部署到静态站点即可，服务器不需要 Node.js。`deploy/nginx.conf` 是可调整的 Nginx 配置示例，尚未部署到真实服务器。
+将 `dist/` 中的文件部署到静态站点即可，不启用账号时服务器不需要 Node.js。`deploy/nginx.conf` 是可调整的 Nginx 配置示例。
+
+### 可选：账号与云存档
+
+不登录时游戏完全离线，存档仍只在本机；登录后进度随账号保存到服务器，可跨设备继续。
+
+- 后端位于 `server/`，只用 Node 内置模块，无需安装任何依赖，也不用数据库：账号写入 `users.json`，每人一份 `saves/<id>.json`，会话密钥为 `secret.key`。
+- 本地启动：`DATA_DIR=./data PORT=8787 node server/index.mjs`。Vite 开发服务器已配置 `/api` 代理，`npm run dev` 即可前后端联调。
+- 接口：`POST /api/auth/register|login|logout`、`GET /api/me`、`GET|PUT /api/save`、`GET /api/health`。密码用 scrypt 哈希，会话为 HMAC 签名 Cookie（`HttpOnly; SameSite=Lax`，30 天）。
+- 默认最多 5 个账号，可用环境变量 `MAX_USERS` 调整。通过 HTTPS 访问时给后端加上 `COOKIE_SECURE=1`；纯 HTTP 局域网访问保持不设置，否则浏览器不会保存登录 Cookie。
+
+#### 部署到飞牛 NAS（Docker）
+
+Nginx 以容器运行，后端 `garden-api` 单独一个容器，Nginx 把 `/api/` 反代到宿主机 `8787`。
+
+1. 在 Mac 上执行一键脚本（通过 `~/.ssh/config` 的 `fnos` 别名连接，脚本顶部可改路径）：
+
+   ```sh
+   ./deploy/deploy-garden.sh
+   ```
+
+   它会：上传 `server/*.mjs` 到 `/vol1/1000/Docker/garden-server/`，在 NAS 上以 `admin(1000:1001)` 身份启动 `garden-api`，并在 `nginx -t` 校验通过后重载 Nginx。
+
+2. 也可在 NAS 上单独执行启动脚本：
+
+   ```sh
+   ssh -t fnos 'bash /vol1/1000/Docker/garden-server/remote-garden-setup.sh'
+   ```
+
+3. Nginx 的游戏站点只需加一段反代（模板见 `deploy/nginx-garden-api.conf`）：
+
+   ```nginx
+   location /api/ {
+       proxy_pass http://192.168.199.5:8787;
+       proxy_http_version 1.1;
+       proxy_set_header Host              $host;
+       proxy_set_header X-Real-IP         $remote_addr;
+       proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+       proxy_set_header X-Forwarded-Proto $scheme;
+   }
+   ```
+
+4. 验证：`curl http://192.168.199.5:5888/api/health` 应返回 `{"ok":true,"users":0,"maxUsers":5}`。
+
+**数据与备份**：账号、存档与 `secret.key` 都在 `/vol1/1000/Docker/Data/garden/`（容器内 `/data/garden`，属主为 `admin`）。备份命令：
+
+```sh
+ssh fnos 'tar czf /vol1/1000/Docker/Data/garden-backup-$(date +%F).tar.gz -C /vol1/1000/Docker/Data garden'
+```
+
+**清空重来**：`ssh -t fnos 'bash /vol1/1000/Docker/garden-server/reset-garden-data.sh'`。服务把用户表缓存在内存，手动删除文件后必须重启容器才会生效。
+
+**忘记密码**：暂无找回流程。删除对应用户的 `saves/<id>.json`，从 `users.json` 移除该条，重启容器后让对方重新注册。
+
+`deploy/docker-compose.garden.yml` 提供等价的 compose 写法，便于并入现有编排；`deploy/nginx.conf` 是纯静态部署示例。
 
 ## 操作
 
@@ -44,11 +98,13 @@ npm run preview
 - 多发/连发与黄油已按真实单颗弹丸结算（每颗 20 伤害、黄油发射前确定）；杨桃为五向固定星星，投掷弹道仍为简化机制；原版个别细节仍需逐项对照。
 - 原版商店植物在首次通关后统一开放，卡槽按章节扩展；已有简易庭院道具商店；尚无独立小游戏、生存、解谜和花园。
 - 雪人图鉴和行为已定义，但尚未加入重玩关卡的出怪流程。
-- 没有战局中途存档、云存档或账号。
+- 没有战局中途存档。账号与云存档为可选的简单实现：密码经 scrypt 哈希、会话用签名 Cookie；但存档内容仍由客户端产生，不做防作弊与成绩校验，也不支持邮箱找回密码。
 
 ## 验证记录
 
 - 规则测试覆盖资源、冷却、暂停、护甲、水路、屋顶、蘑菇唤醒、跳跃、扶梯、爆炸、传送带、模仿者和存档校验。
+- 后端测试 `server/index.test.mjs` 覆盖注册、密码校验、未登录 401、存档按用户隔离与 `MAX_USERS` 上限；`npm test` 共 318 项通过。
+- 真实浏览器验证注册后自动上传存档、顶栏显示同步状态与退出登录；NAS 上经 Nginx 实测 `/api/health`、注册、存档读写与 Cookie 下发。
 - 50 个关卡使用固定种子和自动玩家跑到结算，检查无卡死和非法资源；胜负取决于自动策略与当前难度。此检查**不代表全部关卡已经通过人工通关验收**。
 - Chromium 实测素材加载、开局、点击种植和暂停界面；桌面及手机横屏截图在 `output/playwright/`。
 - 尚未完成 Safari、真机触控性能和全关卡人工平衡验收。
@@ -64,10 +120,13 @@ npm run preview
 - `src/game/audio.ts`：Web Audio 合成音效、并发限制与音量。
 - `src/game/animation.ts`、`layout.ts`：动画帧和统一战场坐标。
 - `assets-source/`、`scripts/prepare-assets.mjs`：生成图源与 PNG 裁切流程。
-- `src/store.ts`：Pinia 与带校验的 localStorage 存档。
+- `src/store.ts`：Pinia 与带校验的 localStorage 存档，登录后叠加防抖云同步。
+- `src/auth.ts`、`src/api.ts`：登录态与后端接口封装。
 - `src/App.vue`：菜单、选卡、图鉴、设置、HUD 与结算。
+- `server/`：零依赖 Node 后端，文件存储的账号、会话与存档接口。
+- `deploy/deploy-garden.sh`、`remote-garden-setup.sh`、`reset-garden-data.sh`：飞牛 NAS 的上传发布、启动容器与清空数据脚本。
 
-存档键为 `pvz-garden-save-v1`，版本 2，兼容迁移版本 1。导入只接受连续、合法的关卡进度，失败不会覆盖当前数据。清理站点数据、更换浏览器、域名或端口会影响存档访问，应提前导出 JSON 备份。
+存档键为 `pvz-garden-save-v1`，版本 2，兼容迁移版本 1。导入只接受连续、合法的关卡进度，失败不会覆盖当前数据。清理站点数据、更换浏览器、域名或端口会影响存档访问，应提前导出 JSON 备份。登录后按 `updatedAt` 时间戳对账：云端较新则采用云端，否则把本机进度上传，设置页也提供手动覆盖按钮。
 
 ## 本次升级
 

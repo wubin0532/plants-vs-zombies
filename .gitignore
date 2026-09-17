@@ -28,6 +28,9 @@ output/
 .DS_Store
 Thumbs.db
 
+# Server runtime data (accounts, saves, session secret)
+server/data/
+
 # Internal planning/audit docs and raw asset sources (keep local only)
 docs/
 assets-source/
