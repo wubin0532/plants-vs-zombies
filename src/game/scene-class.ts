@@ -51,6 +51,7 @@ export class GardenScene extends Phaser.Scene {
   terrainKey = "";
   keep = new Set<string>();
   hover!: Phaser.GameObjects.Rectangle;
+  cursorBox!: Phaser.GameObjects.Rectangle;
   ghost!: Phaser.GameObjects.Image;
   acc = 0;
   previous = new Map<number, { x: number; row: number; h: number }>();
@@ -188,6 +189,19 @@ export class GardenScene extends Phaser.Scene {
       .setStrokeStyle(2, 0xfff1b0, 0.8)
       .setVisible(false)
       .setDepth(101);
+    // 键盘光标：方向键唤出后常显，颜色随选中种子/工具在光标格的合法性变化。
+    this.cursorBox = this.add
+      .rectangle(
+        0,
+        0,
+        BOARD.cell - 2,
+        BOARD.lawnHeight / this.engine.level.rows - 2,
+        0xfff1b0,
+        0.08,
+      )
+      .setStrokeStyle(3, 0xfff1b0, 0.95)
+      .setVisible(false)
+      .setDepth(101);
     // 拖动预览：单一本体 + 有效/无效染色，避免光晕造成重影。
     this.ghost = this.add
       .image(0, 0, "pea")
@@ -200,6 +214,8 @@ export class GardenScene extends Phaser.Scene {
     this.input.on("gameout", () => { this.ghost.setVisible(false); this.hover.setVisible(false); });
     this.input.mouse?.disableContextMenu();
     this.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
+      // 指针接管操作：清掉键盘光标，避免两套焦点视觉并存。
+      this.engine.cursor = null;
       if (p.rightButtonDown()) {
         this.engine.cancelSelection();
         this.hover.setVisible(false);
@@ -246,6 +262,7 @@ export class GardenScene extends Phaser.Scene {
     });
     // 从顶部卡片直接拖到草坪：抬手时在落点种植（点选种植在 pointerdown 已处理）。
     this.input.on("pointerup", (p: Phaser.Input.Pointer) => {
+      this.engine.cursor = null;
       // Always clear the transient preview first.  A cancelled/invalid drag
       // must not leave the previous plant half-rendered for the next drag.
       this.resetGhost();
@@ -371,6 +388,19 @@ export class GardenScene extends Phaser.Scene {
       this.options.audio?.update(this.realTime, e.zombies.length / 18, e.level.scene);
     this.wasPaused = e.paused || e.status !== "playing";
     this.preview(this.input.activePointer);
+    const cursor = e.cursor;
+    const cursorActive =
+      !!cursor && e.inBoard(cursor.row, cursor.col) && !e.paused && e.status === "playing";
+    this.cursorBox.setVisible(cursorActive);
+    if (cursorActive && cursor) {
+      this.cursorBox.setPosition(this.x(cursor.col), this.y(cursor.row));
+      const reason = e.selected === "tool"
+        ? e.toolTargetReason(cursor.row, cursor.col)
+        : e.selected && plantById[e.selected]
+          ? e.canPlant(e.selected, cursor.row, cursor.col)
+          : "";
+      this.cursorBox.setStrokeStyle(3, reason ? 0xe05545 : 0xfff1b0, 0.95);
+    }
     if (_time - this.lastNotify > 80) {
       this.notify();
       this.lastNotify = _time;

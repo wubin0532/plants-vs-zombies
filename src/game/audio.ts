@@ -21,6 +21,7 @@ export type SoundKind =
   | "win"
   | "lose"
   | "click"
+  | "denied"
   | "pea"
   | "frost"
   | "spore"
@@ -198,7 +199,7 @@ export class GardenAudio {
         ? "music"
         : kind === "ambient"
           ? "environment"
-          : ["sun", "coin", "click", "win", "lose"].includes(kind)
+          : ["sun", "coin", "click", "denied", "win", "lose"].includes(kind)
             ? "ui"
             : "battle";
     const bus = ctx.createGain(),
@@ -497,6 +498,10 @@ export class GardenAudio {
         [523, 659, 784, 1046].forEach((f, i) =>
           voice(f, f, 0.3, 0.14, "triangle", i * 0.14),
         );
+        break;
+      case "denied":
+        voice(196, 147, 0.1, 0.13, "triangle");
+        voice(147, 110, 0.13, 0.11, "triangle", 0.09);
         break;
       case "lose":
         [392, 330, 262].forEach((f, i) =>

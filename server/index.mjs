@@ -23,20 +23,51 @@ const COOKIE_NAME = 'pvz_session';
 const COOKIE_SECURE = process.env.COOKIE_SECURE === '1';
 const MAX_BODY = 300 * 1024;
 const MAX_SAVE = 256 * 1024;
-const WINDOW_MS = 60 * 1000;
-const MAX_ATTEMPTS = 20;
+const WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 60 * 1000);
+const MAX_ATTEMPTS = Number(process.env.RATE_LIMIT_MAX || 20);
+// PUT /api/save 的宽松上限：客户端自动保存有 2s 防抖（src/store.ts），
+// 峰值约 30 次/分钟，取 2 倍余量；超限只影响该用户自己的存档写入。
+const MAX_SAVE_WRITES = Number(process.env.SAVE_RATE_LIMIT_MAX || 60);
 
-const attempts = new Map();
+function makeRateLimiter(maxPerWindow) {
+  const hits = new Map();
+  let lastSweep = 0;
+  return function limited(key) {
+    const now = Date.now();
+    // 惰性清理：至多每秒全表扫一次，剔除窗口已过期的条目，
+    // 避免 hits 随独立 IP 数只增不减（长进程内存泄漏）。
+    if (now - lastSweep > 1000) {
+      lastSweep = now;
+      for (const [k, entry] of hits) {
+        if (now > entry.reset) hits.delete(k);
+      }
+    }
+    const entry = hits.get(key);
+    if (!entry || now > entry.reset) {
+      // 过期条目直接以新窗口覆盖重建，旧记录不驻留
+      hits.set(key, { count: 1, reset: now + WINDOW_MS });
+      return false;
+    }
+    entry.count += 1;
+    return entry.count > maxPerWindow;
+  };
+}
 
-function rateLimited(ip) {
-  const now = Date.now();
-  const entry = attempts.get(ip);
-  if (!entry || now > entry.reset) {
-    attempts.set(ip, { count: 1, reset: now + WINDOW_MS });
-    return false;
+const authLimited = makeRateLimiter(MAX_ATTEMPTS);
+const saveWriteLimited = makeRateLimiter(MAX_SAVE_WRITES);
+
+function clientIp(req) {
+  // 信任前提：仅在 nginx 反代之后部署时可信——deploy/nginx-garden-api.conf
+  // 会写入 X-Real-IP 并把客户端地址追加进 X-Forwarded-For，此时首跳是真实客户端。
+  // 若客户端可绕过反代直连本服务，这两个头均可伪造（可用来规避限流或“转移”限流），
+  // 那种部署方式下应删掉下面的头部解析、只认 remoteAddress。
+  const forwarded = req.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string' && forwarded.trim()) {
+    return forwarded.split(',')[0].trim();
   }
-  entry.count += 1;
-  return entry.count > MAX_ATTEMPTS;
+  const realIp = req.headers['x-real-ip'];
+  if (typeof realIp === 'string' && realIp.trim()) return realIp.trim();
+  return req.socket.remoteAddress || 'unknown';
 }
 
 function send(res, status, payload, headers) {
@@ -148,7 +179,7 @@ async function route(req, res) {
   const rawPath = url.pathname;
   const pathname = rawPath.length > 1 && rawPath.endsWith('/') ? rawPath.slice(0, -1) : rawPath;
   const method = req.method || 'GET';
-  const ip = req.socket.remoteAddress || 'unknown';
+  const ip = clientIp(req);
 
   if (pathname === '/api/health' && method === 'GET') {
     const users = await loadUsers();
@@ -156,7 +187,7 @@ async function route(req, res) {
   }
 
   if (pathname === '/api/auth/register' && method === 'POST') {
-    if (rateLimited(ip)) return send(res, 429, { error: '请求过于频繁，请稍后再试' });
+    if (authLimited(ip)) return send(res, 429, { error: '请求过于频繁，请稍后再试' });
     const body = await readBody(req);
     if (!validName(body.username)) return send(res, 400, { error: '用户名需为 1-20 位、不含空格' });
     if (!validPassword(body.password)) return send(res, 400, { error: '密码长度需为 4-128 位' });
@@ -168,7 +199,7 @@ async function route(req, res) {
   }
 
   if (pathname === '/api/auth/login' && method === 'POST') {
-    if (rateLimited(ip)) return send(res, 429, { error: '请求过于频繁，请稍后再试' });
+    if (authLimited(ip)) return send(res, 429, { error: '请求过于频繁，请稍后再试' });
     const body = await readBody(req);
     const user = await findUserByName(String(body.username || ''));
     const ok = user ? await verifyPassword(String(body.password || ''), user) : false;
@@ -197,6 +228,7 @@ async function route(req, res) {
   if (pathname === '/api/save' && method === 'PUT') {
     const user = await currentUser(req);
     if (!user) return send(res, 401, { error: '未登录' });
+    if (saveWriteLimited(user.id)) return send(res, 429, { error: '保存过于频繁，请稍后再试' });
     const body = await readBody(req);
     const data = body.data;
     if (!data || typeof data !== 'object' || Array.isArray(data)) return send(res, 400, { error: '存档格式不正确' });
@@ -227,6 +259,8 @@ const server = http.createServer(function (req, res) {
 });
 
 server.listen(PORT, HOST, function () {
-  console.log('[garden-api] listening on http://' + HOST + ':' + PORT);
+  const address = server.address();
+  const actualPort = address && typeof address === 'object' ? address.port : PORT;
+  console.log('[garden-api] listening on http://' + HOST + ':' + actualPort);
   console.log('[garden-api] data dir: ' + (process.env.DATA_DIR || '(default ./data)'));
 });

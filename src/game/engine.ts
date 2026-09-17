@@ -17,6 +17,7 @@ import {
   isNight,
   type Level,
 } from "./content";
+import { levelCleared, replayShift } from "./replay";
 const DANGER_ZOMBIES = new Set([
   "garg",
   "football",
@@ -210,6 +211,8 @@ export class Engine {
   paused = false;
   cooldowns: Record<string, number> = {};
   selected = "";
+  /** 键盘种植的草坪光标：方向键唤出，指针操作时清空。 */
+  cursor: { row: number; col: number } | null = null;
   toolUses = 3;
   toolSource = 0;
   hammer: "ice" | "electric" = "ice";
@@ -232,6 +235,10 @@ export class Engine {
   bossTimer = 12;
   bossBall: { row: number; x: number; type: "fire" | "ice" } | null = null;
   imitate = "pea";
+  /** 本局是否为通关重玩：默认按本地存档判定，调用方可在构造后显式覆盖。 */
+  replay?: boolean;
+  /** 雪人僵尸预定出场的波次：-1 未判定，0 本局不出现。 */
+  private yetiWave = -1;
   cannon = 0;
   bowls: {
     uid: number;
@@ -335,6 +342,31 @@ export class Engine {
   }
   inBoard(row: number, col: number) {
     return Number.isInteger(row) && Number.isInteger(col) && row >= 0 && row < this.level.rows && col >= 0 && col < 9;
+  }
+  /** 键盘光标：首次按方向键从草坪中央出现，之后夹取在网格内移动。 */
+  moveCursor(dRow: number, dCol: number) {
+    if (this.level.mode === "bowling") return;
+    const base = this.cursor ?? { row: Math.floor(this.level.rows / 2), col: 4 };
+    this.cursor = {
+      row: Math.min(this.level.rows - 1, Math.max(0, base.row + dRow)),
+      col: Math.min(8, Math.max(0, base.col + dCol)),
+    };
+  }
+  /** 回车在光标格执行操作：与指针点击同一入口，合法性校验与失败反馈一致。 */
+  cursorAction() {
+    if (!this.cursor || this.paused || this.status !== "playing") return;
+    const { row, col } = this.cursor;
+    if (!this.inBoard(row, col)) return;
+    if (this.level.mode === "whack" && this.selected !== "tool") {
+      const zombie = this.zombies.find(
+        (z) => Math.abs(z.row - row) < 0.5 && Math.abs(z.x - col) < 0.5,
+      );
+      if (zombie) {
+        this.hitZombie(zombie.uid);
+        return;
+      }
+    }
+    this.click(row, col);
   }
   cancelSelection() {
     this.selected = "";
@@ -714,17 +746,41 @@ export class Engine {
       );
     if (destroyed) this.plantsLost += before - this.plants.length;
   }
+  private shovelConfirm: { row: number; col: number; until: number } | null = null;
   shovel(row: number, col: number) {
     if (this.paused || this.status !== "playing") return;
     const p =
       this.at(row, col, "armor") ||
       this.at(row, col, "main") ||
       this.at(row, col, "base");
-    if (p) {
-      // remove() 会连带移除玉米炮配对的另一半。
-      this.remove(p);
-      this.effect(col, row, "plant");
+    if (!p) return;
+    // 铲掉底座（睡莲/花盆）会连带清掉整格植物，误点代价高：
+    // 首次点击不执行，只提示并进入 3 秒确认窗口；窗口内再铲同格才整格移除。
+    const base = this.at(row, col, "base");
+    if (
+      base &&
+      base.hp > 0 &&
+      this.plants.some(
+        (q) => q.uid !== base.uid && q.row === row && q.col === col && q.hp > 0,
+      )
+    ) {
+      const pending = this.shovelConfirm;
+      this.shovelConfirm = null;
+      if (pending && pending.row === row && pending.col === col && this.time <= pending.until) {
+        this.remove(base);
+        this.effect(col, row, "plant");
+      } else {
+        this.shovelConfirm = { row, col, until: this.time + 3 };
+        this.say(
+          `${plantById[base.id].name}上还种着植物，3 秒内再铲一次将整格移除`,
+          "alert",
+        );
+      }
+      return;
     }
+    // remove() 会连带移除玉米炮配对的另一半。
+    this.remove(p);
+    this.effect(col, row, "plant");
   }
   collect(uid: number) {
     if (this.paused || this.status !== "playing") return;
@@ -897,6 +953,31 @@ export class Engine {
     for (const id of new Set(plan)) this.unitWaves.set(id, wave);
     return plan;
   }
+  /**
+   * 雪人僵尸：只在通关重玩的普通关出现，约两成概率在本局中段某波开始时
+   * 混入一次（沿用既有的停留后逃跑逻辑）。判定只做一次，且只在 replay 时
+   * 消耗随机数，不改变首玩局内的确定性序列。
+   */
+  private mixYeti(wave: number) {
+    if (this.level.mode !== "normal") return;
+    if (this.yetiWave < 0) {
+      this.yetiWave = 0;
+      if (this.replay ?? levelCleared(this.level.id)) {
+        // 种子内随机 + 重玩散列位移：同一关多次重玩各自独立约两成概率。
+        if ((this.random() + replayShift()) % 1 < 0.2) {
+          const total = this.totalWaves;
+          const lo = Math.max(2, Math.ceil(total / 3));
+          const hi = Math.max(lo, Math.floor((total * 2) / 3));
+          this.yetiWave = lo + Math.floor(this.random() * (hi - lo + 1));
+        }
+      }
+    }
+    if (!this.yetiWave || wave !== this.yetiWave) return;
+    this.yetiWave = 0;
+    this.spawn("yeti");
+    this.say("雪人僵尸出现了！在它转身逃跑前击败它", "alert");
+    this.sound("warning");
+  }
   private pickRow(id: string): number {
     const rows = Array.from({ length: this.level.rows }, (_, r) => r);
     const land = rows.filter((r) => !this.water(r));
@@ -1060,9 +1141,21 @@ export class Engine {
       this.tiles = this.tiles.filter((t) => t !== vase);
       this.effect(col, row, "plant");
       if (vase.reward) this.conveyor.push(vase.reward);
-      else if (this.random() < 0.4)
-        this.spawn(this.random() < 0.2 ? "bucket" : "basic", row, col);
-      else
+      else if (this.random() < 0.4) {
+        const tough = this.random() < 0.2;
+        // 水路罐不能开出陆行僵尸：普通位出鸭子救生圈，稀有位出潜水（由水路罐送的缠绕海草克制）。
+        this.spawn(
+          this.water(row)
+            ? tough
+              ? "snorkel"
+              : "ducky"
+            : tough
+              ? "bucket"
+              : "basic",
+          row,
+          col,
+        );
+      } else
         this.conveyor.push(
           this.water(row)
             ? "kelp"
@@ -1319,6 +1412,7 @@ export class Engine {
         if (event.wave % 4 === 0 || event.wave === this.totalWaves)
           this.say("一大波僵尸正在接近！");
         if (this.level.mode !== "whack") this.wavePlan = this.composeWave(event.wave);
+        this.mixYeti(event.wave);
       }
       const id =
         this.level.mode === "whack"
@@ -1483,7 +1577,9 @@ export class Engine {
       }
       if (d.kind === "mine") {
         p.ready = p.age >= 14;
-        if (p.ready && ahead.some((z) => Math.abs(z.x - p.col) < 0.4)) {
+        // 触发半径必须大于僵尸的啃食起手距离（0.45）：僵尸进入啃食后不再
+        // 移动，半径更小的话它会在触发圈外停下，把地雷直接吃掉。
+        if (p.ready && ahead.some((z) => Math.abs(z.x - p.col) < 0.5)) {
           this.blast(p.col, p.row, 0.55, 1800, "potato");
           this.remove(p);
         }

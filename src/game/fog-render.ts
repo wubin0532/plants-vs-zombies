@@ -34,6 +34,13 @@ type Buffer = {
   ctx: CanvasRenderingContext2D;
 };
 
+/**
+ * 遮罩重算的最小间隔（秒）。迷雾是慢变化，逐帧重算不可感知地浪费：
+ * 低端最省，高画质也限制在 20fps；光源/画质变化会绕过间隔立即重算。
+ */
+export const fogRefreshInterval = (quality: string) =>
+  quality === "low" ? 0.1 : quality === "medium" ? 0.066 : 0.05;
+
 /** 云雾层：贴图、世界尺寸、滚动速度、不透明度 */
 const LAYERS = [
   { key: 'mist-a', size: 820, speed: 9, alpha: 0.78 },
@@ -49,7 +56,7 @@ export class FogRenderer {
   private cloud = document.createElement('canvas');
   private key = '';
   private lastTime = -1;
-  private parity = 0;
+  private lastRender = -Infinity;
   constructor(scene: Phaser.Scene) {
     this.textures = scene.textures;
     this.texture = scene.textures.createCanvas('mist-surface', 600, 345)!;
@@ -88,21 +95,22 @@ export class FogRenderer {
   update(e: Engine, quality: string) {
     const visible = fogActive(e);
     this.image.setVisible(visible);
-    if (!visible) { this.lastTime = -1; this.key = ''; return; }
+    if (!visible) { this.lastTime = -1; this.key = ''; this.lastRender = -Infinity; return; }
     // 每帧只取一次光源列表，避免逐像素过滤数组。
     const lanterns = lanternsIn(e), torches = torchesIn(e);
     const key = `${e.level.rows}:${quality}:` +
       lanterns.map(p => `${p.row},${p.col}`).sort().join(';') + '|' +
       torches.map(p => `${p.row},${p.col}`).sort().join(';');
+    const changed = key !== this.key;
     // 单一守卫：时间冻结（暂停）、光源与画质都没变时，既不重算也不上传贴图。
-    if (key === this.key && e.time === this.lastTime) return;
+    if (!changed && e.time === this.lastTime) return;
     this.key = key;
-    const low = quality === 'low';
-    if (low && e.time !== this.lastTime) {
-      this.parity ^= 1;
-      if (this.parity) { this.lastTime = e.time; return; }
-    }
     this.lastTime = e.time;
+    // 帧级节流：纯时间推进按画质间隔重算（low 原有隔帧减半并入此间隔，更省）；
+    // 光源或画质变化立即重算，照明反馈不延迟。
+    if (!changed && e.time - this.lastRender < fogRefreshInterval(quality)) return;
+    this.lastRender = e.time;
+    const low = quality === 'low';
 
     const { data, w, h, mask, ctx } = this.buffer(quality);
     const t = e.time;

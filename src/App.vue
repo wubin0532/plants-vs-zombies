@@ -60,7 +60,9 @@ const chosen = ref<string[]>([]),
   newAchievements = ref<string[]>([]),
   full = ref(false),
   file = ref<HTMLInputElement>(),
-  imitate = ref("pea");
+  imitate = ref("pea"),
+  booting = ref(false),
+  bootError = ref("");
 let game: Awaited<ReturnType<typeof mountGame>> | undefined;
 let gameGeneration = 0, starting = false;
 let lastRestartKey = -1e9;
@@ -383,6 +385,8 @@ function chooseLevel(id: number) {
   game = undefined;
   engine.value = undefined;
   playing.value = false;
+  booting.value = false;
+  bootError.value = "";
   result.value = "";
   resultStars.value = 0;
   newAchievements.value = [];
@@ -396,15 +400,27 @@ function chooseLevel(id: number) {
   audio.play("click");
 }
 function toggle(id: string) {
-  if (chosen.value.includes(id))
+  if (chosen.value.includes(id)) {
     chosen.value = chosen.value.filter((x) => x !== id);
-  else if (chosen.value.length < slots.value) chosen.value.push(id);
-  audio.play("click");
+    audio.play("click");
+  } else if (chosen.value.length < slots.value) {
+    chosen.value.push(id);
+    audio.play("click");
+  } else {
+    // 卡槽已满：与战斗中选卡失败一致，给抖动动画和拒绝音，不再播成功音。
+    denied.value = "";
+    requestAnimationFrame(() => (denied.value = id));
+    setTimeout(() => {
+      if (denied.value === id) denied.value = "";
+    }, 450);
+    audio.play("denied");
+  }
 }
 async function start() {
   const d = dailyMode.value ? daily.value : null;
   if (starting || (!d && !chosen.value.length)) return;
   starting = true;
+  bootError.value = "";
   const generation = ++gameGeneration;
   try {
     audio.stop();
@@ -444,13 +460,21 @@ async function start() {
     playing.value = true;
     lessonOpen.value = !!lesson.value && !save.data.tutorialSeen.includes(lesson.value.id);
     engine.value.paused = lessonOpen.value;
+    booting.value = true;
     await nextTick();
-    if (generation !== gameGeneration || !gameEl.value) return;
+    if (generation !== gameGeneration || !gameEl.value) {
+      booting.value = false;
+      return;
+    }
     window.scrollTo(0, 0);
-    const mounted = await mountGame(
-      gameEl.value!,
-      engine.value,
-      () => {
+    let mounted: Awaited<ReturnType<typeof mountGame>>;
+    try {
+      // 首次进入要动态加载 Phaser 与贴图；加载失败（网络 404、WebGL 不可用等）
+      // 不能静默白屏，要给出可重试的错误提示。
+      mounted = await mountGame(
+        gameEl.value!,
+        engine.value,
+        () => {
         if (generation !== gameGeneration) return;
         tick.value++;
         const e = engine.value!;
@@ -461,14 +485,27 @@ async function start() {
           save.data.kills += e.kills;
           const mowersIntact = e.mowersLost === 0;
           if (e.status === "won") {
-            if (dailyMode.value) save.recordDaily(daily.value.date, e.time);
-            else if (e.settings.difficulty !== "custom") {
+            if (dailyMode.value) {
+              save.recordDaily(daily.value.date, e.time);
+              // 每日挑战不影响冒险进度，但局内金币照常入账。
+              save.addCoins(e.coins);
+            } else if (e.settings.difficulty !== "custom") {
               save.win(levelId.value, e.coins);
+              // 第三颗星要求速通：最后一波固定在 duration - 45 秒刷完
+              // （见 difficulty.ts 的 makeWaves），胜利时刻必然晚于它。
+              // 以末波刷完时刻为基准给 75 秒清场宽限：实测自动玩家在多数
+              // 关卡的末波清场约 12~107 秒，75 秒让防线扎实的玩家可稳定
+              // 达成，又对拖沓的残局保留区分度；对齐 duration（45 秒宽限）
+              // 则达标与否取决于那段不受玩家控制的尾巴，像掷硬币。
+              const starDeadline = e.settings.duration - 45 + 75;
               resultStars.value =
                 1 +
                 (mowersIntact ? 1 : 0) +
-                (e.time <= e.settings.duration ? 1 : 0);
+                (e.time <= starDeadline ? 1 : 0);
               save.recordStars(levelId.value, resultStars.value);
+            } else {
+              // 自定义模式不解锁关卡，金币照常入账。
+              save.addCoins(e.coins);
             }
             if (!dailyMode.value) save.record(levelId.value, e.time, e.settings);
             audio.play("win");
@@ -504,7 +541,20 @@ async function start() {
           return { x: (badge.left + badge.width / 2 - canvas.left) * 1200 / canvas.width, y: 0 };
         },
       },
-    );
+      );
+    } catch (error) {
+      // 挂载失败（资源 404、WebGL 不可用等）：回到可操作的错误界面，
+      // 不留空白页；此时还没有创建出 Phaser 实例，无需销毁。
+      if (generation !== gameGeneration) return;
+      console.error("游戏挂载失败", error);
+      booting.value = false;
+      playing.value = false;
+      lessonOpen.value = false;
+      bootError.value =
+        "游戏资源加载失败，可能是网络不稳定，或当前浏览器不支持 WebGL。";
+      return;
+    }
+    booting.value = false;
     if (generation === gameGeneration) game = mounted;
     else mounted.destroy(true);
   } finally {
@@ -521,6 +571,8 @@ function home() {
   engine.value = undefined;
   page.value = "home";
   playing.value = false;
+  booting.value = false;
+  bootError.value = "";
   result.value = "";
   dailyMode.value = false;
   modal.value = "";
@@ -559,7 +611,7 @@ function selectSeed(id: string) {
     setTimeout(() => {
       if (denied.value === id) denied.value = "";
     }, 450);
-    audio.play("click");
+    audio.play("denied");
     return;
   }
   const selected = e.selected === id;
@@ -723,9 +775,42 @@ watchEffect(() => {
   document.body.classList.toggle("font-small", save.data.fontSize === "small");
   document.body.classList.toggle("font-large", save.data.fontSize === "large");
 });
-watch(modal, (value) => {
+let modalTrigger: HTMLElement | null = null;
+watch(modal, (value, previous) => {
   if (!value) closeDemo();
+  if (value && !previous) {
+    modalTrigger =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    void nextTick().then(() => {
+      document.querySelector<HTMLElement>(".modal .close")?.focus();
+    });
+  } else if (!value && previous) {
+    if (modalTrigger?.isConnected) modalTrigger.focus();
+    modalTrigger = null;
+  }
 });
+function trapModalTab(e: KeyboardEvent) {
+  const dialog = document.querySelector<HTMLElement>(".modal");
+  if (!dialog) return;
+  const focusables = Array.from(
+    dialog.querySelectorAll<HTMLElement>(
+      'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
+    ),
+  ).filter((el) => el.getClientRects().length > 0);
+  if (!focusables.length) return;
+  const first = focusables[0],
+    last = focusables[focusables.length - 1],
+    active = document.activeElement;
+  if (e.shiftKey && (active === first || !dialog.contains(active))) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && (active === last || !dialog.contains(active))) {
+    e.preventDefault();
+    first.focus();
+  }
+}
 function visibility() {
   if (document.hidden && engine.value?.status === "playing") {
     engine.value.paused = true;
@@ -733,11 +818,20 @@ function visibility() {
   }
 }
 function keyboard(e: KeyboardEvent) {
+  // 弹窗打开时：Tab 循环限制在弹窗内；Esc 关闭弹窗（输入框内除外，保持原有提前返回）。
+  if (modal.value && e.key === "Tab") {
+    trapModalTab(e);
+    return;
+  }
   if (
     e.target instanceof HTMLInputElement ||
     e.target instanceof HTMLSelectElement
   )
     return;
+  if (modal.value) {
+    if (e.code === "Escape") modal.value = "";
+    return;
+  }
   if (page.value !== "game") return;
   if (e.code === "Space") {
     e.preventDefault();
@@ -751,12 +845,41 @@ function keyboard(e: KeyboardEvent) {
     tick.value++;
   }
   if (e.key === "s" || e.key === "S") selectSeed("shovel");
+  if (e.key.toLowerCase() === "f") void fullscreen();
   if (e.key.toLowerCase() === "t") useGardenTool();
   if (e.key.toLowerCase() === "q") chooseHammer("ice");
   if (e.key.toLowerCase() === "e") chooseHammer("electric");
+  // 方向键唤出并移动草坪光标；回车在光标格种植/铲除/用工具，与指针同一入口。
+  if (e.code.startsWith("Arrow") && engine.value) {
+    const eng = engine.value;
+    if (eng.status === "playing" && !eng.paused) {
+      e.preventDefault();
+      const [dRow, dCol] =
+        e.code === "ArrowUp"
+          ? [-1, 0]
+          : e.code === "ArrowDown"
+            ? [1, 0]
+            : e.code === "ArrowLeft"
+              ? [0, -1]
+              : [0, 1];
+      eng.moveCursor(dRow, dCol);
+      tick.value++;
+    }
+  }
+  if ((e.code === "Enter" || e.code === "NumpadEnter") && engine.value?.cursor) {
+    const eng = engine.value;
+    if (eng.status === "playing" && !eng.paused) {
+      e.preventDefault();
+      eng.cursorAction();
+      tick.value++;
+    }
+  }
   if ((e.key === "r" || e.key === "R") && engine.value) {
-    if (result.value || performance.now() - lastRestartKey < 3000) void start();
-    else {
+    if (result.value || performance.now() - lastRestartKey < 3000) {
+      // 重开触发后立刻清零确认窗口，否则 3 秒内第三次按 R 会跳过确认。
+      lastRestartKey = -1e9;
+      void start();
+    } else {
       lastRestartKey = performance.now();
       engine.value.say("再按一次 R 重新开始本关");
     }
@@ -840,6 +963,10 @@ onBeforeUnmount(() => {
         </button>
       </div>
     </header>
+    <div v-if="save.warning" class="save-warning" role="status">
+      <span>{{ save.warning }}</span
+      ><button aria-label="关闭提示" @click="save.warning = ''">×</button>
+    </div>
     <main>
       <template v-if="page === 'home'">
         <div class="eyebrow">
@@ -1134,7 +1261,7 @@ onBeforeUnmount(() => {
                 v-for="p in available"
                 :key="p.id"
                 class="seed-card"
-                :class="{ picked: chosen.includes(p.id) }"
+                :class="{ picked: chosen.includes(p.id), denied: denied === p.id }"
                 @click="toggle(p.id)"
                 :title="p.desc"
               >
@@ -1314,6 +1441,22 @@ onBeforeUnmount(() => {
               <span>{{ stats.weather }}</span><small>{{ stats.weatherSeconds }} 秒 · {{ stats.weather === '寒风' ? '全场减速' : '阳光加速' }}</small>
             </div>
             <div ref="gameEl" class="phaser-mount" aria-label="游戏草坪"></div>
+            <div v-if="booting && !result" class="game-overlay">
+              <div class="pause-card boot-card">
+                <span class="boot-spinner" aria-hidden="true"></span>
+                <h2>正在布置庭院…</h2>
+                <p>首次进入需要加载游戏资源，请稍候。</p>
+              </div>
+            </div>
+            <div v-else-if="bootError" class="game-overlay">
+              <div class="pause-card">
+                <span class="kicker">LOAD FAILED</span>
+                <h2>庭院没能搭起来。</h2>
+                <p>{{ bootError }}</p>
+                <button class="primary" @click="start">重新加载 →</button
+                ><button class="text-button" @click="home">返回庭院</button>
+              </div>
+            </div>
             <div
               v-if="stats.message && !stats.paused && !result"
               class="game-message"
@@ -1495,7 +1638,7 @@ onBeforeUnmount(() => {
         </div>
         <p class="keyboard-hint">
           点击种子，再点击草坪种植 · 按住 Shift 连种 · 点击阳光收集 ·
-          空格暂停 · 数字键选卡 · S 键切换铲子 · 连按两次 R 重开本关
+          空格暂停 · F 键全屏 · 数字键选卡 · 方向键移动光标 · 回车种植 · S 键切换铲子 · 连按两次 R 重开本关
         </p>
       </template>
     </main>
@@ -1504,7 +1647,12 @@ onBeforeUnmount(() => {
       ><span>Vue 3 <i>·</i> Phaser 3 <i>·</i> 本地保存</span>
     </footer>
     <div v-if="modal" class="modal-backdrop" @click.self="modal = ''">
-      <section class="modal" :class="{ 'wide-modal': modal !== 'settings' }">
+      <section
+        class="modal"
+        :class="{ 'wide-modal': modal !== 'settings' }"
+        role="dialog"
+        aria-modal="true"
+      >
         <button class="close" aria-label="关闭" @click="modal = ''">×</button>
         <template v-if="modal === 'map'"
           ><p class="kicker">THE ADVENTURE MAP</p>

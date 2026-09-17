@@ -195,7 +195,8 @@ export const useSave = defineStore("save", {
         const raw = localStorage.getItem(key);
         if (raw) this.data = validateSave(JSON.parse(raw));
       } catch {
-        this.warning = "本地存档无法读取。可导入备份恢复，原数据尚未覆盖。";
+        this.warning =
+          "本地存档损坏，进度已重置。如有备份，可在设置中导入恢复。";
       }
     },
     persist() {
@@ -307,6 +308,12 @@ export const useSave = defineStore("save", {
       );
       this.data.coins += coins;
       delete this.data.lossStreak[level];
+      this.persist();
+    },
+    /** 每日挑战与自定义模式不解锁冒险进度，但局内收集的金币照常入账。 */
+    addCoins(coins: number) {
+      if (!Number.isFinite(coins) || coins <= 0) return;
+      this.data.coins += Math.floor(coins);
       this.persist();
     },
     recordLoss(level: number) {

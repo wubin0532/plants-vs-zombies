@@ -1,4 +1,4 @@
-import { it, expect, describe, beforeEach } from "vitest";
+import { it, expect, describe, beforeEach, vi, afterEach } from "vitest";
 import { setActivePinia, createPinia } from "pinia";
 import { Engine } from "../src/game/engine";
 import { zombies, plantById } from "../src/game/content";
@@ -44,5 +44,48 @@ describe("lossStreak", () => {
       lossStreak: { 3: 2, 99: 1, x: -1 },
     });
     expect(save.lossStreak).toEqual({ 3: 2 });
+  });
+});
+describe("金币入账", () => {
+  beforeEach(() => setActivePinia(createPinia()));
+  it("addCoins 只加金币、不解锁进度，供每日挑战与自定义模式结算", () => {
+    const save = useSave();
+    save.data.coins = 100;
+    save.addCoins(45);
+    expect(save.data.coins).toBe(145);
+    expect(save.data.unlocked).toBe(1);
+    expect(save.data.completed).toEqual([]);
+    save.addCoins(0);
+    save.addCoins(-10);
+    expect(save.data.coins).toBe(145);
+  });
+});
+describe("存档损坏提示", () => {
+  beforeEach(() => setActivePinia(createPinia()));
+  afterEach(() => vi.unstubAllGlobals());
+  it("本地存档无法解析时设置警告，且不覆盖内存中的进度", () => {
+    const stored = new Map([["pvz-garden-save-v1", "{oops"]]);
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => stored.get(k) ?? null,
+      setItem: (k: string, v: string) => void stored.set(k, v),
+      removeItem: (k: string) => void stored.delete(k),
+    });
+    const save = useSave();
+    save.data.coins = 500;
+    save.load();
+    expect(save.data.coins).toBe(500);
+    expect(save.warning).toContain("本地存档损坏");
+  });
+  it("persist 写入失败时设置警告", () => {
+    vi.stubGlobal("localStorage", {
+      getItem: () => null,
+      setItem: () => {
+        throw Error("QuotaExceededError");
+      },
+      removeItem: () => {},
+    });
+    const save = useSave();
+    save.persist();
+    expect(save.warning).toContain("未能保存进度");
   });
 });
