@@ -74,6 +74,8 @@ export type Zombie = {
   otherFreeze?: number;
   freeze: number;
   timer: number;
+  /** 舞王召唤计时，独立于啃食 timer，避免召唤抢走啃食。 */
+  summonTimer?: number;
   age: number;
   jumped: boolean;
   /** 金属装备被磁力菇吸走后置为 true（梯子、跳杆、矿镐、玩偶匣）。 */
@@ -85,6 +87,8 @@ export type Zombie = {
   reverse: boolean;
   ally: boolean;
   thrown: boolean;
+  /** 该伴舞由哪个舞王召唤（舞王 uid），用于统计与上限。 */
+  summoner?: number;
   maxArmor: number;
   motion: number;
   hurt?: number;
@@ -977,6 +981,7 @@ export class Engine {
       slow: 0,
       freeze: 0,
       timer: 0,
+      summonTimer: 0,
       age: 0,
       jumped: false,
       underground: id === "digger",
@@ -1966,6 +1971,7 @@ export class Engine {
     }
     z.age += dt;
     z.timer -= clock;
+    if (z.summonTimer !== undefined) z.summonTimer -= clock;
     z.action = "walk";
     if (z.jump) {
       z.action = "jump";
@@ -1986,13 +1992,27 @@ export class Engine {
       if (!action.hit && action.elapsed >= action.duration * 0.5) {
         action.hit = true;
         if (action.kind === "summon") {
-          for (const row of [z.row - 1, z.row + 1]) {
+          // 原作：上下左右各 1 只，共 4 只；只在减员时补，不无限增援。
+          const live = this.zombies.filter(
+            (q) => q.id === "backup" && q.summoner === z.uid && q.hp > 0,
+          ).length;
+          let need = 4 - live;
+          const spots: [number, number][] = [
+            [z.row - 1, z.x],
+            [z.row + 1, z.x],
+            [z.row, Math.max(0.2, z.x - 1)],
+            [z.row, Math.min(9.6, z.x + 1)],
+          ];
+          for (const [row, x] of spots) {
+            if (need <= 0) break;
             if (row < 0 || row >= this.level.rows || this.water(row)) continue;
-            this.spawn("backup", row, z.x);
-            const dancer = this.zombies.at(-1)!;
-            dancer.ally = z.ally;
-            dancer.reverse = z.reverse;
-            this.effect(z.x, row, "land", "backup");
+            this.spawn("backup", row, x);
+            const backup = this.zombies.at(-1)!;
+            backup.summoner = z.uid;
+            backup.ally = z.ally;
+            backup.reverse = z.reverse;
+            this.effect(x, row, "land", "backup");
+            need--;
           }
         } else if (action.kind === "throw") {
           this.spawn("imp", z.row, z.x);
@@ -2069,11 +2089,17 @@ export class Engine {
       z.hp = 0;
       return;
     }
-    if (z.id === "dancer" && z.timer <= 0) {
-      z.timer = 18;
-      z.special = { kind: "summon", elapsed: 0, duration: 0.9, hit: false };
-      z.action = "special";
-      return;
+    if (z.id === "dancer" && (z.summonTimer ?? 0) <= 0) {
+      z.summonTimer = 18;
+      const live = this.zombies.filter(
+        (q) => q.id === "backup" && q.summoner === z.uid && q.hp > 0,
+      ).length;
+      // 只有不足 4 只时才起舞补召。
+      if (live < 4) {
+        z.special = { kind: "summon", elapsed: 0, duration: 0.9, hit: false };
+        z.action = "special";
+        return;
+      }
     }
     if (z.id === "garg" && z.hp < z.max / 2 && !z.thrown) {
       z.thrown = true;

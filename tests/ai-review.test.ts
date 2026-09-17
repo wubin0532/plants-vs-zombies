@@ -40,7 +40,8 @@ it("舞王不把陆生伴舞召唤进水池", () => {
   e.spawn("dancer", 1, 6);
   e.updateZombie(e.zombies[0], 0.01);
   e.updateZombie(e.zombies[0], 0.5);
-  expect(e.zombies.filter(z => z.id === "backup").map(z => z.row)).toEqual([0]);
+  // 上路 + 同行前后；水路（行 2）跳过。
+  expect(e.zombies.filter(z => z.id === "backup").map(z => z.row)).toEqual([0, 1, 1]);
 });
 it("僵尸跳过已经死亡的南瓜，攻击其下仍存活的植物", () => {
   const e = new Engine(1, []);
