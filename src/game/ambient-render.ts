@@ -1,7 +1,6 @@
 import type Phaser from "phaser";
 import { BOARD } from "./layout";
-import { tokenPose, weatherOpacity, WIND_DURATION, RAIN_DURATION } from "./ambient";
-import type { Token } from "./engine";
+import { weatherOpacity, WIND_DURATION, RAIN_DURATION } from "./ambient";
 
 export function drawWeather(g: Phaser.GameObjects.Graphics, time: number, windUntil: number, rainUntil: number, quality: string) {
   g.clear();
@@ -44,43 +43,5 @@ export function drawWeather(g: Phaser.GameObjects.Graphics, time: number, windUn
         g.fillCircle(x, y, 3);
       }
     }
-  }
-}
-
-export function drawToken(g: Phaser.GameObjects.Graphics, token: Token, rows: number, time: number, cold: number) {
-  const { x, y, scale, alpha, turn } = tokenPose(token, rows);
-  const pulse = 0.5 + Math.sin(time * 4 + token.uid) * 0.5;
-  g.fillStyle(token.coin ? 0xeac366 : 0xffd95c, 0.14 * alpha);
-  g.fillCircle(x, y, (token.coin ? 23 : 30 + pulse * 3) * scale);
-  if (token.coin) {
-    const width = 30 * turn * scale;
-    g.fillStyle(0x9c6728, alpha);
-    g.fillEllipse(x + 2, y + 2, width, 31 * scale);
-    g.fillStyle(0xeac05c, alpha);
-    g.fillEllipse(x, y, width, 30 * scale);
-    g.lineStyle(2, 0xffe7a5, alpha);
-    g.strokeEllipse(x, y, Math.max(2, width - 5), 25 * scale);
-    g.lineStyle(2, 0x99702f, alpha * turn);
-    g.strokeRect(x - 3 * turn, y - 4, 6 * turn, 8);
-    g.fillStyle(0xfff9d4, alpha * (0.35 + pulse * 0.65));
-    g.fillEllipse(x - 5 * turn, y - 7, 4 * turn, 6);
-  } else {
-    g.lineStyle(3, 0xf9c24f, alpha);
-    for (let i = 0; i < 8; i++) {
-      const a = i * Math.PI / 4 + time * 0.3;
-      const r = (24 + pulse * 3) * scale;
-      g.lineBetween(x + Math.cos(a) * r, y + Math.sin(a) * r,
-        x + Math.cos(a) * (r + 5 * scale), y + Math.sin(a) * (r + 5 * scale));
-    }
-    g.fillStyle(0xffe18a, alpha);
-    g.fillCircle(x, y, 20 * scale);
-    g.lineStyle(2, 0xf6bc48, alpha);
-    g.strokeCircle(x, y, 18 * scale);
-    g.fillStyle(0xfff6c7, alpha * 0.8);
-    g.fillEllipse(x - 6 * scale, y - 7 * scale, 11 * scale, 6 * scale);
-  }
-  if (cold) {
-    g.lineStyle(1.5, 0xe2faff, cold * alpha * (0.2 + pulse * 0.3));
-    g.strokeCircle(x, y, (token.coin ? 22 : 33) * scale);
   }
 }

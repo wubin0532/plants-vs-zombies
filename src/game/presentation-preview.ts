@@ -9,7 +9,7 @@ const $ = (id:string) => document.getElementById(id)!;
 const audio = new GardenAudio(); audio.enabled=false;
 let game: Awaited<ReturnType<typeof mountGame>> | undefined;
 let engine: Engine; let generation=0; let selected={kind:'plant',id:'puff'};
-let frozen=false;
+let frozen=false; let fogOn=false;
 const captions:Record<string,string>={pea:'豌豆',icepea:'冰豌豆',spore:'孢子',needle:'仙人掌刺',homing:'追踪尖刺',cabbage:'卷心菜',kernel:'玉米粒',butter:'黄油',melon:'西瓜',winter:'冰西瓜',star:'星星',fire:'火球',cob:'炮弹',basketball:'篮球',snowball:'冰球',sun:'阳光',coin:'金币',shield:'保护伞护盾',magnet:'磁力',crack:'破损',iceblock:'冻结',sleep:'休眠',splash:'水花',dust:'尘土',impact:'冲击',bloom:'魅惑',wind:'风',ring:'能量环'};
 function card(parent:string,id:string,title:string,image:string,kind:string) {
  const button=document.createElement('button');button.className='card'+(kind==='asset'?' asset':'');
@@ -57,17 +57,21 @@ async function show(){
  const gen=++generation;game?.destroy(true);audio.stop();frozen=false;
  let level=Number(($('scene') as HTMLSelectElement).value);
  if(['sea','kelp','lily','cattail'].includes(selected.id)&&![21,31].includes(level))level=31;
- engine=new Engine(level,[]);engine.schedule=[];engine.sun=9999;engine.eventAt=-1;engine.fogClear=9999;
+ engine=new Engine(level,[]);engine.schedule=[];engine.sun=9999;engine.eventAt=-1;engine.fogClear=fogOn?0:9999;
+ if(fogOn&&engine.level.scene==='fog')engine.time=30;
  seedDemo(engine);
+ const addFogDemo=()=>{if(fogOn&&engine.level.scene==='fog')engine.addPlant('lantern',1,6);};
+ addFogDemo();
  $('caption').textContent=selected.kind==='plant'?`${plantById[selected.id].name} · ${plantById[selected.id].desc}`:selected.kind==='zombie'?`${zombieById[selected.id].name} · 行走、受击与特殊动作`:`${captions[selected.id]??selected.id} · 透明背景原创图片`;
- let resetAt=0;
+ let resetAt=engine.time;
  const mounted=await mountGame($('stage'),engine,()=>{
   if(gen!==generation)return;
-  if(engine.time-resetAt>7){seedDemo(engine);resetAt=engine.time;}
+  if(engine.time-resetAt>7){seedDemo(engine);addFogDemo();resetAt=engine.time;}
  },{audio,quality:()=> 'high',shake:()=>false});
  if(gen!==generation)mounted.destroy(true);else game=mounted;
 }
 $('scene').onchange=()=>void show();$('reset').onclick=()=>void show();
+$('fog').onclick=()=>{fogOn=!fogOn;$('fog').textContent=fogOn?'迷雾：开':'迷雾：关';void show();};
 $('pause').onclick=()=>{engine.paused=!engine.paused;$('pause').textContent=engine.paused?'继续动画':'暂停动画';};
 $('mute').onclick=async()=>{audio.enabled=!audio.enabled;$('mute').textContent=audio.enabled?'声音：开':'声音：关';if(audio.enabled)await audio.unlock();};
 $('hurt').onclick=()=>{for(const p of engine.plants){p.hp=p.max*.3;p.hurt=.16;}for(const z of engine.zombies){z.hp=z.max*.4;z.armor=0;z.hurt=.16;}};

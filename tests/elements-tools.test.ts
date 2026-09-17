@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Engine, type Zombie } from '../src/game/engine';
+import { Engine } from '../src/game/engine';
 import { applyControl } from '../src/game/elements';
 import { initial, validateSave } from '../src/store';
 import { plantById } from '../src/game/content';

@@ -129,3 +129,62 @@ npm run preview
 - 推荐卡组先保证经济、场景底座与持续输出，再补照明和克制卡；选卡准备清单与推荐标记同步，图鉴增加战斗手册。第十卡槽使用 `0`，手机横屏卡栏可滚动且工具按钮保持可见。
 
 验证：290 项自动测试通过，包含 50 关固定种子模拟；生产构建通过。Chromium 检查 2-1、4-1、4-3、4-5、4-9、4-10，验证路灯实际点击种植、遮罩透明区、剪影、暂停、三叶草清雾到期与第十卡槽。浏览器截图和本地验收脚本位于 `output/playwright/`（不纳入版本管理）。自动模拟与浏览器功能检查不代表真人已完成逐关难度验收。
+
+## 美术资产管线与 AI 出图接入（2026-09-16）
+
+### 一键重建资产
+
+```bash
+npm run assets          # 云雾贴图 → 道具 → 表现插图 → 夜战底图 → 立绘/背景（顺序有依赖）
+npm run assets:import   # 把 assets-source/redraw/ 里的 AI 出图抠图、归一化并接入
+npm run assets:compress # 源图 PNG → WebP（关键素材 lossless，其余 q92，带 PSNR 校验）
+npm run assets:verify   # 资产质检：立绘脚底/贴边、地形锚点、水面透明度、底图水带、云雾接缝、插图唯一性
+npm run verify:assets   # 资产质检：立绘脚底/小推车触地线/地形居中/token 居中/背景水线/云雾接缝与竖条纹
+npm run assets:mist     # 只重建云雾贴图与暖光
+npm run assets:backgrounds  # 只重建 fog.png / night.png
+npm run assets:portraits    # 只重建立绘、VFX 与背景 webp
+```
+
+### 立绘切图（连通域自动切图）
+
+源图集 `assets-source/plants.png`（7×7）与 `zombies.png`（6×5）**并非等距排布**，旧的等分切图会把跨格精灵切断（玉米加农炮、地刺、冰西瓜、模仿者、僵尸博士、巨人僵尸等）。
+
+现在 `scripts/lib/sprite-segmentation.mjs` 改为：alpha 连通域标记 → 全局贪心一比一匹配到标称格 → 粘连精灵用最小割切开。配套：
+
+- `scripts/sprite-display-baseline.json`：每个立绘的**目标显示高度**基线。切图时据此算出显示补偿写入 `src/game/sprite-scale.generated.ts`，由 `src/game/proportions.ts` 消费，保证修切图不会改变战斗中的大小观感。走动作图集的僵尸（basic/cone/bucket/garg/pole）不套用补偿。
+- `scripts/asset-crop-overrides.json`（可选）：个别精灵的裁切框覆盖表。
+- `tests/sprite-crop.test.ts`：回归测试。断言每个连通域的像素都完整落在其归属精灵内（被格线切开即失败）、粘连只有已知的一处、立绘内容不贴边、补偿表覆盖齐全。
+
+### AI 出图如何接入
+
+**立绘 / 云雾 / 表现插图**：直接覆盖同名文件即可，代码无需改动。
+
+| 目标文件 | 说明 |
+|---|---|
+| `public/assets/mist/mist-{a,b,c}.webp` | 无缝可平铺云雾（1024×512，带 alpha） |
+| `public/assets/mist/glow-lantern.webp` | 路灯暖光（256×256） |
+| `public/assets/portraits/p-*.webp` / `z-*.webp` | 立绘（160×160 / 160×200） |
+| `public/assets/presentation/*.webp` | 弹丸与状态插图（128×128） |
+
+**底图**：放入 `assets-source/fog.png` / `night.png`，再跑 `npm run assets:portraits`。
+
+- 底图必须 12:7（建议 1643×957 或 2400×1380），缩放到 1200×690。
+- 可玩区 x 210–1101、y 116–620；**迷雾后院的水路必须精确落在 y 284–452**（对齐参考图：`output/art-review/fog-layout-guide.png`）。水线做进美术后，`scene-class.ts` 里的运行时重映射已删除。
+
+### 当前夜战美术来源
+
+`assets-source/fog.png` 与 `night.png` 由 `scripts/prepare-backgrounds.mjs` **结合项目自有美术**生成：以 `pool.png` / `day.png` 为底（几何零偏差），叠加夜景调色、月光、雾带、水面压色、暖窗光与暗角，墓园额外加墓碑剪影与萤火虫。这是无外部 AI 绘图能力时的一致性方案；换成 AI 出图只需覆盖同名文件。
+
+验证：`npm test`（298 项）与 `npm run build` 通过；Chromium 实测迷雾关水线落在 y 282–285 / 450（期望 284 / 452），月下墓园与迷雾后院渲染正常。
+
+## 发布前审查与清理（2026-09-17）
+
+- **战斗/属性相克复查**：逐项验证护甲与铁栅门盾牌、冰火与冰电解控、潜水/飞行/地下/友军目标判定、大蒜换行、魅惑转化、蹦极/投石车与保护伞、地刺扎车等规则，均与现有测试一致。修复一处表现缺陷：大喷菇/忧郁菇开火时未记录 `attackAge`，头部后坐动作不播放；现已补上并加回归测试。
+- **性能**：`tickControls` 的控制字段数组提升为模块常量（消除每僵尸每帧的数组分配）；僵尸啃咬目标的 `filter + sort` 改为单趟选取，并移除了比较器里的对象字面量；迷雾可见性判定不再逐僵尸重复过滤全场火炬，改由渲染层预计算后传入。
+- **无用代码清理**：移除从未读取的 `nextSpawn`、已下线的“冰冻开场”`iceStart`（商店早已替换为种子袋扩容）、仅被旧测试引用而运行时不用的 `lightFalloff`、未使用的 `levelDuration`，以及若干未用导入/变量。
+- **无用素材清理**：删除 `public/assets/audio/` 下 111 个从未被运行时或当前导出脚本引用的 WAV 与 manifest（约 3 MB）。音频仍由 Web Audio 实时合成；如需离线导出，运行 `scripts/export-audio-playwright.js` 会生成 `output/pvz-audio.zip`。构建产物 `dist/` 由 9.8 MB 降至 6.6 MB。
+- **贴图质检**：`npm run verify:assets` 全绿（立绘/小推车/地形/token/水面/底图水线/云雾接缝/插图唯一性）。仍保留“13 张植物、15 张僵尸立绘脚底水平偏移 >8px”的提示：该指标取底部 15% 像素的重心，会被不对称底座带偏，属参考而非硬性错误。
+- **困难模式智能攻击**：困难难度为僵尸加入基础战术——按 `laneStrength`（把割草机也算作防线强度）每波重算主攻行，并以 85% 概率集火最薄弱的一行；投石车改打该行威胁最高的植物；蹦极直接空降到全场威胁最高的主植物格；玩偶匣走向植物最密集的一行再自爆；撑杆、海豚、跳跳与矿工被高坚果挡住时会绕到相邻旱路一次（每次绕行仅触发一次、不会进入水路）。投石车与蹦极都会跳过叶子保护伞。普通/休闲/自定义完全沿用旧规则（302 项原测试零改动通过）。脚本玩家 50 关固定种子胜率由 12%（只有困难数值）降到 8%（叠加智能层）。
+
+验证：314 项自动测试通过，生产构建通过。
+

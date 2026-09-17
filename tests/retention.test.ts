@@ -56,14 +56,6 @@ it("备用小推车结算只按实际触发次数计", () => {
   spareUsed.step(0.1);
   expect(spareUsed.mowersLost).toBe(2);
 });
-it("冰冻开场冻结首波僵尸", () => {
-  const e = new Engine(1, []);
-  e.iceStart = true;
-  for (let i = 0; i < 400 && !e.zombies.length; i++) e.step(0.1);
-  expect(e.zombies.length).toBeGreaterThan(0);
-  expect(e.zombies.every((z) => z.freeze > 0)).toBe(true);
-  expect(e.iceStart).toBe(false);
-});
 it("新存档字段宽松校验，非法值丢弃", () => {
   const save = validateSave({
     ...initial(),

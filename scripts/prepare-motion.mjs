@@ -1,4 +1,5 @@
 import sharp from "sharp";
+import { sourcePathOrThrow } from "./lib/assets.mjs";
 import { mkdir } from "node:fs/promises";
 // Ignore disconnected alpha specks when finding the character bounds.
 async function characterCrop(buffer) {
@@ -78,7 +79,7 @@ for (const [id, spec] of Object.entries(specifications)) {
     standing,
   } = spec;
   const count = rows * 4;
-  const source = `assets-source/${id === "chomper" ? "plant" : "zombie"}-${id}-motion.png`;
+  const source = sourcePathOrThrow(`assets-source/${id === "chomper" ? "plant" : "zombie"}-${id}-motion`);
   const meta = await sharp(source).metadata();
   if (!meta.hasAlpha)
     throw new Error(`${id}: source must have real alpha transparency`);

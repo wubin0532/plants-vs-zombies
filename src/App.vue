@@ -13,7 +13,6 @@ import {
   plants,
   plantById,
   zombies,
-  zombieById,
   worlds,
   levels,
   isMushroom,
@@ -927,6 +926,12 @@ onBeforeUnmount(() => {
               <option value="custom">自定义</option></select
             ><button class="plain" @click="resetDifficulty">恢复默认</button>
           </div>
+          <p
+            v-if="save.data.options.difficulty === 'hard'"
+            class="hint hard-mode-hint"
+          >
+            困难模式下僵尸会集火最薄弱且没有割草机的一行，优先拆除高威胁植物，还会绕开高坚果、把玩偶匣送到植物最密集处。
+          </p>
           <div
             v-if="save.data.options.difficulty === 'custom'"
             class="custom-difficulty"

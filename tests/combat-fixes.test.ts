@@ -17,7 +17,7 @@ it("冰冻啃咬停止姿势、攻击和位移", () => {
 });
 it("原目标死亡，豌豆仍能命中后方敌人", () => {
   const e = new Engine(1, []);
-  const p = e.addPlant("pea", 0, 0);
+  e.addPlant("pea", 0, 0);
   e.spawn("basic", 0, 2);
   e.spawn("basic", 0, 4);
   e.shoot(e.plants[0], e.zombies[0], 20);
@@ -73,6 +73,16 @@ it("巨人扔出的小鬼使用连续飞行，冻结时停在半空", () => {
   imp.freeze = 1;
   e.updateZombie(imp, 0.1);
   expect(imp.x).toBe(x);
+});
+it("烟雾类植物开火时记录攻击时间，头部后坐动作生效", () => {
+  for (const id of ["fume", "gloom"] as const) {
+    const e = new Engine(11, []);
+    const p = e.addPlant(id, 0, 3);
+    p.timer = 0;
+    e.spawn("basic", 0, 4.2);
+    e.step(1 / 60);
+    expect(p.attackAge, id).toBe(0);
+  }
 });
 it("大蒜换行保留连续展示的起点", () => {
   const e = new Engine(1, []);

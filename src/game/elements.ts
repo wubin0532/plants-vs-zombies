@@ -7,8 +7,10 @@ export function applyControl(z: Zombie, source: ControlSource, seconds: number) 
   if (source === 'iceSlow' || source === 'weatherSlow') z.slow = Math.max(z.slow, seconds);
   else z.freeze = Math.max(z.freeze, seconds);
 }
+/** Hoisted so the per-zombie control tick allocates nothing. */
+const CONTROL_KEYS = ['iceSlow', 'iceFreeze', 'weatherSlow', 'otherFreeze'] as const;
 export function tickControls(z: Zombie, dt: number) {
-  for (const key of ['iceSlow', 'iceFreeze', 'weatherSlow', 'otherFreeze'] as const)
+  for (const key of CONTROL_KEYS)
     z[key] = Math.max(0, (z[key] ?? 0) - dt);
   z.slow = Math.max(0, z.slow - dt);
   z.freeze = Math.max(0, z.freeze - dt);

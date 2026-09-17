@@ -1,4 +1,4 @@
-import { levels, type Level } from "./content";
+import type { Level } from "./content";
 export type Difficulty = "casual" | "standard" | "hard" | "custom";
 export type BattleOptions = {
   difficulty: Difficulty;
@@ -126,10 +126,4 @@ export function makeWaves(
     }
   }
   return result.sort((a, b) => a.at - b.at);
-}
-export function levelDuration(
-  id: number,
-  options: Partial<BattleOptions> = {},
-) {
-  return battleSettings(levels[id - 1], options).duration;
 }

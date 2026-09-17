@@ -36,6 +36,8 @@ const SHIELD_ARMOR = new Set(["screen"]);
 const MAGNET_TARGETS = new Set(["bucket", "screen", "football"]);
 /** 磁力菇能吸走的工具／器械，吸走后对应能力失效。 */
 const MAGNET_TOOLS = new Set(["pogo", "digger", "ladder", "jack"]);
+/** Zombie bite order: shell first, then the main plant, then the support base. */
+const LAYER_RANK: Record<Plant["layer"], number> = { armor: 0, main: 1, base: 2 };
 export type Plant = {
   uid: number;
   hurt?: number;  id: string;
@@ -76,6 +78,8 @@ export type Zombie = {
   jumped: boolean;
   /** 金属装备被磁力菇吸走后置为 true（梯子、跳杆、矿镐、玩偶匣）。 */
   disarmed?: boolean;
+  /** 困难模式下绕过坚果的一次性换行标记。 */
+  detoured?: boolean;
   underground: boolean;
   flying: boolean;
   reverse: boolean;
@@ -193,7 +197,6 @@ export class Engine {
   tiles: Tile[] = [];
   mowers: boolean[];
   spareMowers: boolean[];
-  iceStart = false;
   sun = 150;
   coins = 0;
   time = 0;
@@ -252,7 +255,6 @@ export class Engine {
   windUntil = 0;
   private rng: number;
   private natural = 4;
-  private nextSpawn = 22;
   private beltTimer = 0;
   constructor(
     id: number,
@@ -291,7 +293,6 @@ export class Engine {
       for (let r = 0; r < 5; r++)
         for (let c = 0; c < 3; c++) this.addPlant("pot", r, c);
     if (this.level.mode === "vases") {
-      this.nextSpawn = Infinity;
       for (let r = 0; r < 6; r++)
         for (let c = 4; c < 8; c++)
           this.tiles.push({ row: r, col: c, type: "vase", life: Infinity });
@@ -300,7 +301,6 @@ export class Engine {
       this.say("冰、电标记罐藏着组合种子；其余罐子可能有僵尸！");
     }
     if (this.level.mode === "whack") {
-      this.nextSpawn = 2;
       this.say("点击僵尸，用锤子保卫庭院！");
     }
     if (this.isBelt) {
@@ -801,24 +801,35 @@ export class Engine {
     }
     budget = Math.ceil(budget * factor);
     const next = wave + 1;
-    if (
-      !novice &&
-      next <= this.totalWaves &&
-      (next % 4 === 0 || next === this.totalWaves)
-    ) {
-      const nextAt = this.schedule.find((e) => e.wave === next)?.at;
-      if (nextAt !== undefined) {
-        const candidates = Array.from({ length: this.level.rows }, (_, r) => r)
-          .filter(r => !this.water(r));
-        let weakest = candidates[0];
-        for (const r of candidates.slice(1))
-          if (
-            laneStrength(this.plants, this.zombies, r) <
-            laneStrength(this.plants, this.zombies, weakest)
-          )
-            weakest = r;
-        this.assaultAlert = { at: Math.max(this.time, nextAt - 4), row: weakest };
-        this.assaultLanes.set(next, weakest);
+    if (!novice && next <= this.totalWaves) {
+      const flagWave = next % 4 === 0 || next === this.totalWaves;
+      // 困难模式每波都重算主攻行；其余难度只在旗波前选一次。
+      if (this.smartAttack || flagWave) {
+        const nextAt = this.schedule.find((e) => e.wave === next)?.at;
+        if (nextAt !== undefined) {
+          const candidates = Array.from({ length: this.level.rows }, (_, r) => r)
+            .filter((r) => !this.water(r));
+          const scored = candidates.map((r) => ({
+            r,
+            s: laneStrength(
+              this.plants,
+              this.zombies,
+              r,
+              this.smartAttack && (this.mowers[r] || this.spareMowers[r]),
+            ),
+          }));
+          if (scored.length) {
+            let weakest = scored[0];
+            for (const c of scored.slice(1)) if (c.s < weakest.s) weakest = c;
+            this.assaultLanes.set(next, weakest.r);
+            // 只有旗波才提前预告，避免困难模式每波刷屏。
+            if (flagWave)
+              this.assaultAlert = {
+                at: Math.max(this.time, nextAt - 4),
+                row: weakest.r,
+              };
+          }
+        }
       }
     }
     const weights = new Map(unlocked.map((id) => [id, 1]));
@@ -895,7 +906,13 @@ export class Engine {
     if (!["normal", "conveyor", "storm"].includes(this.level.mode))
       return candidates[Math.floor(this.random() * candidates.length)];
     const assault = this.assaultLanes.get(this.wave);
-    if (assault !== undefined && candidates.includes(assault) && this.random() < 0.6)
+    // 困难模式主攻行更坚决：一次总攻基本压在玩家最薄弱的一行。
+    const assaultChance = this.smartAttack ? 0.85 : 0.6;
+    if (
+      assault !== undefined &&
+      candidates.includes(assault) &&
+      this.random() < assaultChance
+    )
       return assault;
     const [weakP, strongP] = tiltFor(this.level.id, this.settings.difficulty);
     const roll = this.random();
@@ -904,7 +921,12 @@ export class Engine {
     const order = candidates
       .map((r) => ({
         r,
-        s: laneStrength(this.plants, this.zombies, r),
+        s: laneStrength(
+          this.plants,
+          this.zombies,
+          r,
+          this.smartAttack && (this.mowers[r] || this.spareMowers[r]),
+        ),
         j: this.random(),
       }))
       .sort((a, b) => a.s - b.s || a.j - b.j);
@@ -926,7 +948,19 @@ export class Engine {
       !["balloon", "bungee"].includes(id)
     )
       r = [0, 1, 4, 5][Math.floor(this.random() * 4)];
-    if (id === "bungee") x = 1 + Math.floor(this.random() * 7);
+    if (id === "bungee") {
+      // 困难模式蹦极直接挑选全场威胁最高的主植物；其余难度随机落点。
+      const target = row === undefined ? this.bungeeTarget() : undefined;
+      if (target) {
+        r = target.row;
+        x = target.col;
+      } else x = 1 + Math.floor(this.random() * 7);
+    }
+    if (id === "jack" && row === undefined) {
+      // 困难模式玩偶匣走向植物最密集的一行再自爆。
+      const dense = this.densestPlantRow();
+      if (dense !== undefined) r = dense;
+    }
     this.sound("groan", x, id);
     this.guide("zombie", "僵尸来了！在它所在的一行种射手");
     this.zombies.push({
@@ -1000,7 +1034,6 @@ export class Engine {
   click(row: number, col: number, keep = false) {
     if (this.paused || this.status !== "playing" || !this.inBoard(row, col)) return;
     if (this.selected === "tool") { this.useTool(row, col); return; }
-    if (this.paused || this.status !== "playing") return;
     if (this.cannon) {
       const p = this.plants.find((p) => p.uid === this.cannon);
       if (p) {
@@ -1122,6 +1155,89 @@ export class Engine {
         Math.abs(p.row - row) <= 1 &&
         Math.abs(p.col - x) <= 1,
     );
+  }
+  /**
+   * 困难模式启用僵尸的基础战术：集火弱行，并优先拆除高威胁目标。
+   * 普通/休闲/自定义完全走原有规则，保证平衡与回归稳定。
+   */
+  get smartAttack() {
+    return this.settings.difficulty === "hard";
+  }
+  /** 估算一株植物对僵尸的威胁：持续输出、造价与经济价值。 */
+  private plantThreat(p: Plant) {
+    const d = plantById[p.id];
+    let score = d.cost ?? 0;
+    if (!p.sleep && d.damage && d.interval) score += (d.damage / d.interval) * 60;
+    if (d.kind === "cannon") score += 300;
+    if (d.kind === "sun" || d.kind === "coin") score += 40;
+    return score;
+  }
+  /** 投石车目标：普通难度打该行第一株主植物；困难改打威胁最高且未被保护伞罩住的目标。 */
+  private catapultTarget(row: number) {
+    if (!this.smartAttack)
+      return this.plants.find(
+        (p) => p.hp > 0 && p.row === row && p.layer === "main",
+      );
+    let best: Plant | undefined,
+      bestScore = -Infinity;
+    for (const p of this.plants) {
+      if (p.hp <= 0 || p.row !== row || p.layer !== "main") continue;
+      if (this.protected(p.row, p.col)) continue;
+      const score = this.plantThreat(p);
+      if (score > bestScore) {
+        bestScore = score;
+        best = p;
+      }
+    }
+    return best;
+  }
+  /** 邻接行里植物威胁总和最高的行（爆炸会波及上下各一行）。 */
+  private densestPlantRow() {
+    if (!this.smartAttack) return undefined;
+    let best: number | undefined,
+      bestScore = 0;
+    for (let r = 0; r < this.level.rows; r++) {
+      let score = 0;
+      for (const p of this.plants) {
+        if (p.hp <= 0 || Math.abs(p.row - r) > 1) continue;
+        score += this.plantThreat(p) * (p.row === r ? 1 : 0.5);
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        best = r;
+      }
+    }
+    return best;
+  }
+  /** 困难模式的跳跃/挖掘单位遇到坚果时，换到前方坚果更少的相邻旱路。 */
+  private detourLane(z: Zombie) {
+    const options = [z.row - 1, z.row + 1].filter(
+      (r) => r >= 0 && r < this.level.rows && !this.water(r),
+    );
+    if (!options.length) return undefined;
+    const blockers = (r: number) =>
+      this.plants.filter(
+        (p) => p.row === r && p.hp > 0 && p.id === "tallnut",
+      ).length;
+    const min = Math.min(...options.map(blockers));
+    const best = options.filter((r) => blockers(r) === min);
+    return best[Math.floor(this.random() * best.length)];
+  }
+  /** 蹦极目标：普通难度随机落点；困难挑选全场威胁最高且未被保护伞罩住的主植物。 */
+  private bungeeTarget() {
+    if (!this.smartAttack) return undefined;
+    let best: Plant | undefined,
+      bestScore = -Infinity;
+    for (const p of this.plants) {
+      if (p.hp <= 0 || p.layer !== "main") continue;
+      if (this.protected(p.row, p.col)) continue;
+      const score = this.plantThreat(p);
+      if (score > bestScore) {
+        bestScore = score;
+        best = p;
+      }
+    }
+    return best;
   }
   step(dt: number) {
     if (this.paused || this.status !== "playing") return;
@@ -1262,11 +1378,6 @@ export class Engine {
         }
       }
     }
-    if (this.iceStart && this.spawned > 0) {
-      this.iceStart = false;
-      for (const z of this.zombies) applyControl(z, "iceFreeze", 4);
-      this.sound("freeze");
-    }
     if (this.level.mode === "boss") this.updateBoss(dt);
     for (const p of [...this.plants]) {
       if (p.hp <= 0) continue;
@@ -1349,11 +1460,9 @@ export class Engine {
             this.bossBall = null;
         }
         if (d.kind === "blover") {
+          // 走 damage() 死亡路径（穿透护甲），保持击杀特效/掉落一致。
           for (const z of targets)
-            if (z.flying) {
-              z.hp = 0;
-              this.livingCache = null;
-            }
+            if (z.flying) this.damage(z, z.hp, true);
           this.fogClear = 20;
           this.effect(p.col, p.row, "wind", p.id);
         }
@@ -1598,6 +1707,8 @@ export class Engine {
         if (fired) {
           p.timer = d.interval || 1.4;
           if (["fume", "gloom"].includes(d.kind)) {
+            // 烟雾类不走 shoot()，需在这里补上攻击动作时间，否则头部不会后坐。
+            p.attackAge = 0;
             this.sound("spore", p.col, p.id);
             this.effect(p.col + 1, p.row, "spore", p.id);
           }
@@ -1970,9 +2081,7 @@ export class Engine {
     if (z.id === "catapult" && !z.ally && z.x > 7 && z.age < 30) {
       z.action = "special";
       if (z.timer <= 0) {
-        const p = this.plants.find(
-          (p) => p.hp > 0 && p.row === z.row && p.layer === "main",
-        );
+        const p = this.catapultTarget(z.row);
         if (p && !this.protected(p.row, p.col)) {
           p.hp -= 100;
           p.hurt = 0.16;
@@ -2021,19 +2130,20 @@ export class Engine {
       }
       return;
     }
-    const target = this.plants
-      .filter(
-        (p) =>
-          p.row === z.row &&
-          p.hp > 0 &&
-          Math.abs(p.col - z.x) < 0.45 &&
-          plantById[p.id].kind !== "spike",
-      )
-      .sort(
-        (a, b) =>
-          ({ armor: 0, main: 1, base: 2 })[a.layer] -
-          { armor: 0, main: 1, base: 2 }[b.layer],
-      )[0];
+    // 单趟选出优先级最高的可啃食植物（保护壳 → 主体 → 底座），
+    // 避免每只僵尸每帧 filter + sort 以及比较器里的对象字面量分配。
+    let target: Plant | undefined;
+    let targetRank = Infinity;
+    for (const p of this.plants) {
+      if (p.row !== z.row || p.hp <= 0) continue;
+      if (Math.abs(p.col - z.x) >= 0.45) continue;
+      if (plantById[p.id].kind === "spike") continue;
+      const rank = LAYER_RANK[p.layer];
+      if (rank < targetRank) {
+        targetRank = rank;
+        target = p;
+      }
+    }
     if (target && !z.flying && !z.underground && !z.ally) {
       if (z.id === "garg") {
         if (z.timer <= 0) {
@@ -2073,6 +2183,22 @@ export class Engine {
         if (z.id !== "pogo") z.jumped = true;
 
         return;
+      }
+      // 困难模式：跳跃/挖掘单位被高坚果挡住时，绕到相邻旱路而不是原地硬啃。
+      if (
+        this.smartAttack &&
+        !z.detoured &&
+        ["pole", "dolphin", "pogo", "digger"].includes(z.id) &&
+        target.id === "tallnut"
+      ) {
+        const lane = this.detourLane(z);
+        if (lane !== undefined) {
+          z.detoured = true;
+          z.laneChange = { from: z.row, elapsed: 0 };
+          z.row = lane;
+          this.effect(z.x, z.row, "jump", z.id);
+          return;
+        }
       }
       z.action = "eat";
       if (z.timer <= 0) {

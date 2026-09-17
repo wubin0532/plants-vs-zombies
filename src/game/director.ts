@@ -1,7 +1,13 @@
 import { plantById } from "./content";
 import type { Plant, Zombie } from "./engine";
 /** Defense score per lane: plant dps + wall hp + control bonuses - enemy hp. */
-export function laneStrength(plants: Plant[], zombies: Zombie[], row: number) {
+export function laneStrength(
+  plants: Plant[],
+  zombies: Zombie[],
+  row: number,
+  /** 困难模式把“这一行还有割草机”也算作防线强度，优先集火没有后手的那一行。 */
+  mower = false,
+) {
   let score = 0;
   for (const p of plants) {
     if (p.row !== row || p.hp <= 0) continue;
@@ -13,6 +19,7 @@ export function laneStrength(plants: Plant[], zombies: Zombie[], row: number) {
   }
   for (const z of zombies)
     if (z.row === row && !z.ally && z.hp > 0) score -= (z.hp + z.armor) / 300;
+  if (mower) score += 8;
   return score;
 }
 /** Weak-lane/strong-lane pick probabilities; halved tilt for beginners. */

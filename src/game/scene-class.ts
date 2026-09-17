@@ -1,9 +1,9 @@
 import { FogRenderer } from "./fog-render";
-import { foggedAt, lanternsIn } from "./visibility";
+import { foggedAt, lanternsIn, torchesIn } from "./visibility";
 import { presentationAssets, presentationImage, projectileVisual, projectileHidden, plantAccent, plantBodyPose, zombieAccent, zombieVisualPose } from "./presentation";
 import Phaser from "phaser";
 import { plants, zombies, plantById } from "./content";
-import { plantImage, zombieImage, gardenImage, effectImage, bowlImage } from "./art";
+import { plantImage, zombieImage, gardenImage, effectImage, bowlImage, mistImage, mowerImage, terrainImage, waterImage, tokenImage } from "./art";
 import { BOARD, cellX, cellY, feetY, cellAt, healthFraction } from "./layout";
 import {
   bakeZombie,
@@ -18,9 +18,8 @@ import {
   zombiePose,
 } from "./animation";
 import { plantScale, zombieScale } from "./proportions";
-import { bakeMower } from "./mower";
 import { tokenPose, weatherOpacity, WIND_DURATION } from "./ambient";
-import { drawWeather, drawToken } from "./ambient-render";
+import { drawWeather } from "./ambient-render";
 import type { GardenAudio } from "./audio";
 export type RenderOptions = {
   audio?: GardenAudio;
@@ -42,8 +41,9 @@ export class GardenScene extends Phaser.Scene {
   mist!: FogRenderer;
   waterSurface!: Phaser.GameObjects.Graphics;
   lightPreview!: Phaser.GameObjects.Graphics;
-  terrain!: Phaser.GameObjects.Graphics;
   terrainCache!: Phaser.GameObjects.RenderTexture;
+  waterBase!: Phaser.GameObjects.Image;
+  waterRipple!: Phaser.GameObjects.TileSprite;
   terrainKey = "";
   keep = new Set<string>();
   hover!: Phaser.GameObjects.Rectangle;
@@ -64,6 +64,16 @@ export class GardenScene extends Phaser.Scene {
   }
   preload() {
     this.load.image("garden", gardenImage(this.engine.level.scene));
+    for (const id of ["mist-a", "mist-b", "mist-c", "glow-lantern"] as const)
+      this.load.image(id, mistImage(id));
+    // 道具贴图：小推车为 4 帧精灵表（128×96/帧），其余为单图。
+    this.load.spritesheet("mower", mowerImage(), { frameWidth: 128, frameHeight: 96 });
+    for (const kind of ["grave", "vase", "ice", "crater"] as const)
+      this.load.image("terrain-" + kind, terrainImage(kind));
+    for (const kind of ["water-strip", "water-ripple"] as const)
+      this.load.image(kind, waterImage(kind));
+    for (const kind of ["token-sun", "token-coin"] as const)
+      this.load.image(kind, tokenImage(kind));
     for (const id of presentationAssets) this.load.image("art-" + id, presentationImage(id));
     for (const id of sequenceZombies)
       this.load.spritesheet(
@@ -88,26 +98,23 @@ export class GardenScene extends Phaser.Scene {
     return cellY(row, this.engine.level.rows);
   }
   create() {
-    let background = "garden";
-    if (this.engine.level.scene === "fog") {
-      // Fog artwork's pool was 30px above the actual water lanes. Remap only the
-      // lawn bands; the house, fence and coordinate system remain untouched.
-      const calibrated = this.textures.createCanvas("fog-garden-aligned", 1200, 690)!;
-      const source = this.textures.get("garden").getSourceImage() as HTMLImageElement;
-      const g = calibrated.context;
-      g.drawImage(source, 0, 0, 1200, 690);
-      const top = BOARD.top, waterTop = top + BOARD.lawnHeight / 3;
-      const waterBottom = top + BOARD.lawnHeight * 2 / 3, bottom = top + BOARD.lawnHeight;
-      for (const [sy, sh, dy, dh] of [
-        [top, 254 - top, top, waterTop - top],
-        [254, 178, waterTop, waterBottom - waterTop],
-        [432, bottom - 432, waterBottom, bottom - waterBottom],
-      ]) g.drawImage(source, BOARD.left, sy, BOARD.cell * 9, sh, BOARD.left, dy, BOARD.cell * 9, dh);
-      calibrated.refresh(); background = "fog-garden-aligned";
-    }
-    this.add.image(600, 345, background).setDisplaySize(1200, 690);
+    // 迷雾后院的水线已在美术生成阶段对齐到网格（y 284-452），无需运行时重映射。
+    this.add.image(600, 345, "garden").setDisplaySize(1200, 690);
     this.waterSurface = this.add.graphics().setDepth(0.3);
-    bakeMower(this);
+    // 水面贴图与波纹层（仅水路场景可见），替代原先的 Graphics 画带。
+    const waterTop = BOARD.top + BOARD.lawnHeight / 3;
+    const waterW = BOARD.cell * 9, waterH = BOARD.lawnHeight / 3;
+    this.waterBase = this.add
+      .image(BOARD.left, waterTop, "water-strip")
+      .setOrigin(0, 0)
+      .setDisplaySize(waterW, waterH)
+      .setDepth(0.28)
+      .setVisible(false);
+    this.waterRipple = this.add
+      .tileSprite(BOARD.left, waterTop, waterW, waterH, "water-ripple")
+      .setOrigin(0, 0)
+      .setDepth(0.32)
+      .setVisible(false);
     for (const id of ["cone", "bucket"]) {
       const texture = this.textures.createCanvas("armor-" + id, 160, 80)!;
       texture.context.drawImage(
@@ -144,7 +151,6 @@ export class GardenScene extends Phaser.Scene {
       );
     this.graphics = this.add.graphics().setDepth(80);
     this.weather = this.add.graphics().setDepth(100.5);
-    this.terrain = this.add.graphics().setVisible(false);
     this.mist = new FogRenderer(this);
     this.lightPreview = this.add.graphics().setDepth(101);
     // RenderTexture 继承 Image，默认原点是 (0.5, 0.5)；不改成左上角的话
@@ -360,43 +366,32 @@ export class GardenScene extends Phaser.Scene {
     g.clear();
     const cold = weatherOpacity(e.time, e.windUntil, WIND_DURATION);
     const lights = lanternsIn(e);
+    const torches = torchesIn(e);
     this.drawWaterAndLight(lights);
 
     drawWeather(this.weather, e.time, e.windUntil, e.rainUntil, this.options.quality?.() || "high");
     const terrainKey = e.tiles.map(t => `${t.type}:${t.row}:${t.col}`).join("|");
     if (terrainKey !== this.terrainKey) {
       this.terrainKey = terrainKey;
-      const g = this.terrain;
-      g.clear();
+      const cache = this.terrainCache.clear();
       for (const tile of e.tiles) {
-        const x = this.x(tile.col),
-          y = this.y(tile.row);
-        if (tile.type === "grave") {
-          // 墓碑：浅色石碑 + 深色描边，夜景里也能一眼看清
-          g.fillStyle(0x1d2a2c, 0.35);
-          g.fillEllipse(x, y + 27, 60, 16);
-          g.fillStyle(0xb8c2c0);
-          g.fillRoundedRect(x - 26, y - 34, 52, 66, 16);
-          g.lineStyle(3, 0x5f6d70);
-          g.strokeRoundedRect(x - 26, y - 34, 52, 66, 16);
-          g.fillStyle(0xffffff, 0.16);
-          g.fillRoundedRect(x - 20, y - 29, 14, 56, 7);
-          g.lineStyle(6, 0x7e8b8c);
-          g.lineBetween(x, y - 19, x, y + 11);
-          g.lineBetween(x - 12, y - 8, x + 12, y - 8);
-        } else if (tile.type === "vase") {
-          g.fillStyle(0xb79b73);
-          g.fillEllipse(x, y + 1, 47, 55);
-          g.fillRoundedRect(x - 17, y - 34, 34, 14, 3);
-          g.lineStyle(3, 0x735c48);
-          g.strokeEllipse(x, y + 1, 47, 55);
-          g.lineBetween(x - 17, y - 16, x + 17, y - 16);
-        } else {
-          g.fillStyle(tile.type === "ice" ? 0xc6e4df : 0x466038, 0.65);
-          g.fillEllipse(x, y + 20, 84, 27);
-        }
+        const x = this.x(tile.col), y = this.y(tile.row);
+        // 贴图锚点沿用旧几何形状的落位：底边贴格心下方，保证与格心对齐。
+        // 站立类（墓碑/罐子）以“底边贴格心下方”对齐；
+        // 地面类（冰道/弹坑）要让**内容中心**落在格心下方约 20px（即植物脚下），
+        // 不是画布中心 —— 否则贴图会飘在格子上半部。
+        const stamp =
+          tile.type === "grave" ? { key: "terrain-grave", offsetY: -26 } :
+          tile.type === "vase" ? { key: "terrain-vase", offsetY: -20 } :
+          tile.type === "ice" ? { key: "terrain-ice", offsetY: 20 } :
+          { key: "terrain-crater", offsetY: 16 };
+        cache.draw(
+          this.make
+            .image({ key: stamp.key, add: false })
+            .setOrigin(0.5, 0.5)
+            .setPosition(x, y + stamp.offsetY),
+        );
       }
-      this.terrainCache.clear().draw(g);
     }
     for (const tile of e.tiles) {
       if (!tile.reward) continue;
@@ -557,7 +552,7 @@ export class GardenScene extends Phaser.Scene {
           : currentJump,
         foot = feetY(renderRow, e.level.rows) - jump;
       // 迷雾中未被路灯花照亮的僵尸只显示深色剪影，隐藏血条与状态图标。
-      const fogged = foggedAt(e, renderRow, renderX, lights);
+      const fogged = foggedAt(e, renderRow, renderX, lights, torches);
       const obj = this.sprite(
         key,
         texture,
@@ -646,7 +641,22 @@ export class GardenScene extends Phaser.Scene {
         }
       }
     }
-    for (const token of e.tokens) drawToken(g, token, e.level.rows, e.time, cold);
+    // 阳光/金币改为贴图精灵，保留原有的浮动、缩放、淡出与金币翻面表现。
+    for (const token of e.tokens) {
+      const pose = tokenPose(token, e.level.rows);
+      const key = "t" + token.uid;
+      keep.add(key);
+      const size = (token.coin ? 30 : 40) * pose.scale;
+      const base = size / 96;
+      this.sprite(key, token.coin ? "token-coin" : "token-sun", pose.x, pose.y, size, size, 82)
+        .setDisplaySize(size, size)
+        .setAlpha(pose.alpha)
+        .setScale(base * (token.coin ? Math.max(.18, pose.turn) : 1), base);
+      if (cold) {
+        g.lineStyle(1.5, 0xe2faff, cold * pose.alpha * .3);
+        g.strokeCircle(pose.x, pose.y, size * .62);
+      }
+    }
     for (const b of e.bowls) {
       const key = "b" + b.uid;
       keep.add(key);
@@ -956,22 +966,18 @@ export class GardenScene extends Phaser.Scene {
   drawWaterAndLight(lights: ReturnType<typeof lanternsIn>) {
     const g = this.waterSurface, e = this.engine;
     g.clear();
-    if (e.level.scene !== "fog" && e.level.scene !== "pool") return;
-    const top = BOARD.top + BOARD.lawnHeight / 3;
-    const h = BOARD.lawnHeight / 3, width = BOARD.cell * 9;
-    const night = e.level.scene === "fog";
-    g.fillStyle(night ? 0x4a939f : 0x8bdded, night ? .12 : .04);
-    g.fillRect(BOARD.left, top, width, h);
-    g.lineStyle(2, night ? 0x9bc4c6 : 0xd0f3e8, .38);
-    g.lineBetween(BOARD.left, top, BOARD.left + width, top);
-    g.lineBetween(BOARD.left, top + h, BOARD.left + width, top + h);
-    const count = this.options.quality?.() === "low" ? 6 : 18;
-    for (let i = 0; i < count; i++) {
-      const x = BOARD.left + 24 + ((i * 137 + e.time * 8) % (width - 70));
-      const y = top + 22 + (i * 47) % (h - 44) + Math.sin(e.time + i) * 3;
-      g.lineStyle(1, 0xbbe2de, .12 + Math.sin(e.time * .6 + i) * .06);
-      g.lineBetween(x, y, x + 30, y - 2);
-    }
+    const wet = e.level.scene === "fog" || e.level.scene === "pool";
+    this.waterBase.setVisible(wet);
+    this.waterRipple.setVisible(wet);
+    if (!wet) return;
+    const quality = this.options.quality?.() || "high";
+    // 水面：半透明贴图叠加在背景美术之上，波纹用 tileSprite 滚动。
+    this.waterBase.setAlpha(quality === "low" ? .7 : 1);
+    // 波纹放大平铺尺寸并压低透明度，避免出现可辨认的重复图案
+    this.waterRipple.setTileScale(1.8, 1.8);
+    this.waterRipple.setAlpha(quality === "low" ? .16 : quality === "medium" ? .22 : .3);
+    this.waterRipple.tilePositionX = e.time * 16;
+    this.waterRipple.tilePositionY = Math.sin(e.time * .8) * 3;
     for (const light of lights) {
       for (let ring = 4; ring > 0; ring--) {
         g.fillStyle(0xffd989, .018 * (5 - ring));

@@ -1,9 +1,17 @@
+# Dependencies
 node_modules/
+
+# Build output and caches
 dist/
+*.tsbuildinfo
+.vite/
+coverage/
+.nyc_output/
+*.log
+
+# Test / tooling output (keep local)
 test-results/
 playwright-report/
-.DS_Store
-
 .playwright-cli/
 output/
 
@@ -16,6 +24,19 @@ output/
 .vscode/
 .idea/
 
+# OS metadata
+.DS_Store
+Thumbs.db
+
 # Internal planning/audit docs and raw asset sources (keep local only)
 docs/
 assets-source/
+
+# Generated offline audio exports; the soundtrack is synthesized at runtime in WebAudio
+# (see scripts/export-audio-playwright.js -> output/pvz-audio.zip)
+public/assets/audio/
+
+# Local-only notes, dev tools and scratch tests (keep local only)
+.learnings/
+art-review.html
+tests/hard-ai.test.ts

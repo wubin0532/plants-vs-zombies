@@ -7,7 +7,16 @@
     "dev": "vite --host 0.0.0.0",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview --host 0.0.0.0",
-    "test": "vitest run"
+    "test": "vitest run",
+    "assets": "node scripts/prepare-mist.mjs && node scripts/prepare-props.mjs && node scripts/prepare-presentation.mjs && node scripts/prepare-backgrounds.mjs && node scripts/prepare-assets.mjs && node scripts/prepare-motion.mjs",
+    "assets:mist": "node scripts/prepare-mist.mjs",
+    "assets:backgrounds": "node scripts/prepare-backgrounds.mjs",
+    "assets:portraits": "node scripts/prepare-assets.mjs",
+    "assets:props": "node scripts/prepare-props.mjs",
+    "assets:import": "node scripts/import-redraw.mjs",
+    "assets:compress": "node scripts/compress-sources.mjs",
+    "verify:assets": "node scripts/verify-assets.mjs",
+    "assets:verify": "node scripts/verify-assets.mjs"
   },
   "dependencies": {
     "phaser": "^3.90.0",

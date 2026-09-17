@@ -1,6 +1,12 @@
 /** Reproducible, original vector artwork, rasterized for Phaser and the asset gallery. */
 import { mkdir, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import sharp from 'sharp';
+/** AI 重绘优先：见 scripts/prepare-props.mjs 的同名说明 */
+const redraw = (name) => {
+  const stem = name.replace(/\.[^.]+$/, "");
+  return [".webp", ".png", ".jpg", ".jpeg"].some((e) => existsSync(`assets-source/redraw/${stem}${e}`));
+};
 const root = 'public/assets/presentation';
 await mkdir(root, { recursive: true });
 const defs = `<defs><radialGradient id="green" cx="32%" cy="24%"><stop stop-color="#edffb7"/><stop offset=".45" stop-color="#9dcd4e"/><stop offset="1" stop-color="#467b30"/></radialGradient><radialGradient id="ice" cx="30%" cy="25%"><stop stop-color="#ffffff"/><stop offset=".4" stop-color="#b9f2fa"/><stop offset="1" stop-color="#458dbd"/></radialGradient><radialGradient id="purple" cx="30%" cy="25%"><stop stop-color="#f6e5ff"/><stop offset=".4" stop-color="#c696de"/><stop offset="1" stop-color="#705298"/></radialGradient><linearGradient id="gold" x2=".8" y2="1"><stop stop-color="#fff5ad"/><stop offset=".45" stop-color="#ffdc62"/><stop offset="1" stop-color="#d9892e"/></linearGradient><linearGradient id="flame" x1="0" x2="1"><stop stop-color="#ee693b" stop-opacity="0"/><stop offset=".4" stop-color="#f36e32"/><stop offset=".8" stop-color="#ffbf53"/><stop offset="1" stop-color="#fff5b4"/></linearGradient></defs>`;
@@ -37,10 +43,56 @@ const assets = {
  wind: `<path d="M13 43H91Q117 42 104 26Q96 17 85 26M8 66H107M23 85H83Q104 85 94 103Q85 114 74 103" fill="none" stroke="#d8f2db" stroke-width="7" stroke-linecap="round"/>`,
  ring: `<circle cx="64" cy="64" r="45" fill="none" stroke="#e4d3fa" stroke-width="7"/><circle cx="64" cy="64" r="33" fill="none" stroke="#af91cf" stroke-width="3" stroke-dasharray="8 12"/>`,
 };
+/**
+ * 统一描边与投影：从 alpha 膨胀出深色轮廓垫在底层，再叠一层柔和暗晕。
+ * 目的是让这些矢量插图与立绘（厚描边卡通）风格一致，而不是各画各的。
+ */
+const SIZE = 256;
+async function stylize(raster) {
+  // 关键：遮罩必须是带 alpha 的 RGBA。灰度图在 dest-in 里会被当成全不透明，
+  // 结果整张图变成实心方块、丢掉透明通道。
+  const { data, info } = await sharp(raster)
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const W = info.width, H = info.height, C = info.channels;
+  const maskRaw = Buffer.alloc(W * H * 4);
+  for (let i = 0; i < W * H; i++) maskRaw[i * 4 + 3] = data[i * C + 3];
+  const mask = await sharp(maskRaw, { raw: { width: W, height: H, channels: 4 } })
+    .png()
+    .toBuffer();
+  // 膨胀成硬轮廓，再用深色填充作为描边
+  const dilated = await sharp(mask).blur(W * 0.011).linear(4.2, -150).png().toBuffer();
+  const outline = await sharp({
+    create: { width: W, height: H, channels: 4, background: { r: 44, g: 58, b: 49, alpha: 1 } },
+  })
+    .composite([{ input: dilated, blend: "dest-in" }])
+    .png()
+    .toBuffer();
+  // 柔和暗晕，让插图在浅色 UI 上也有体积感
+  const halo = await sharp(mask).blur(W * 0.035).linear(0.4, 0).png().toBuffer();
+  const shadow = await sharp({
+    create: { width: W, height: H, channels: 4, background: { r: 13, g: 20, b: 16, alpha: 1 } },
+  })
+    .composite([{ input: halo, blend: "dest-in" }])
+    .png()
+    .toBuffer();
+  return sharp({
+    create: { width: W, height: H, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
+  })
+    .composite([{ input: shadow }, { input: outline }, { input: raster }])
+    .png()
+    .toBuffer();
+}
+
 for (const [id, body] of Object.entries(assets)) {
+ if (redraw(id)) { console.log(`${id}.png: 已由 AI 重绘提供，跳过`); continue; }
  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">${defs}${body}</svg>`;
  await writeFile(`${root}/${id}.svg`,svg);
- await sharp(Buffer.from(svg)).webp({lossless:true}).toFile(`${root}/${id}.webp`);
+ const raster = await sharp(Buffer.from(svg)).resize(SIZE, SIZE).png().toBuffer();
+ const styled = await stylize(raster);
+ // 描边在高分辨率算好后缩回 128，保持原有资源契约（128×128、左上角全透明）。
+ await sharp(styled).resize(128, 128).webp({lossless:true}).toFile(`${root}/${id}.webp`);
 }
 await writeFile(`${root}/manifest.json`, JSON.stringify({version:1,license:'Original artwork created for this project',size:128,assets:Object.keys(assets)},null,2)+'\n');
 console.log(`Prepared ${Object.keys(assets).length} presentation illustrations (SVG + transparent WebP).`);

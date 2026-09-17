@@ -40,6 +40,7 @@ describe('章节与照明', () => {
   it('4-1 已能选择路灯花，左右两列上下各一行同一边界揭露', () => {
     expect(plantById.lantern.unlock).toBe(31);
     const e = new Engine(31, []);
+    e.time = 30; // 跳过蔓延过程，迷雾已完全铺开
     expect(foggedAt(e, 0, 3.49)).toBe(false);
     expect(foggedAt(e, 0, 3.5)).toBe(true);
     const lamp = e.addPlant('lantern', 1, 5);
@@ -61,14 +62,54 @@ describe('章节与照明', () => {
     const time = e.time, remaining = e.fogClear;
     run(e, 1);
     expect(e.time).toBe(time); expect(e.fogClear).toBe(remaining);
-    e.paused = false; e.fogClear = .1; run(e, .2);
+    e.paused = false; e.fogClear = .1; e.time = 30; run(e, .2);
     expect(foggedAt(e, 0, 5)).toBe(true);
   });
-  it('暴风雨每八秒闪电揭露一秒，普通关不闪现', () => {
+  it('暴风雨每八秒闪电揭露一秒，开局有雾，普通关不闪现', () => {
     const e = new Engine(40, []);
-    for (const time of [0, .99, 8, 8.99]) { e.time = time; expect(fogActive(e)).toBe(false); }
-    for (const time of [1, 7.99, 9]) { e.time = time; expect(fogActive(e)).toBe(true); }
+    for (const time of [7, 7.99, 15, 15.99]) { e.time = time; expect(fogActive(e)).toBe(false); }
+    for (const time of [0, .99, 1, 8, 8.99, 9]) { e.time = time; expect(fogActive(e)).toBe(true); }
     expect(fogActive(new Engine(31, []))).toBe(true);
+  });
+  it('迷雾选卡后从右往左动态蔓延，25 秒后铺满', () => {
+    const e = new Engine(31, []);
+    // 开局迷雾尚未进场，最右侧也看得清
+    expect(foggedAt(e, 0, 8.9)).toBe(false);
+    e.time = 12.5; // 蔓延过半，前锋约在 col 6.1
+    expect(foggedAt(e, 0, 7)).toBe(true);
+    expect(foggedAt(e, 0, 6)).toBe(false);
+    e.time = 25; // 完全蔓延后回到 3.5 边界
+    expect(foggedAt(e, 0, 3.49)).toBe(false);
+    expect(foggedAt(e, 0, 3.5)).toBe(true);
+  });
+  it('火炬树桩驱散周围 3x3 的迷雾', () => {
+    const e = new Engine(31, []);
+    e.time = 30;
+    expect(foggedAt(e, 0, 6)).toBe(true);
+    e.addPlant('torch', 0, 5);
+    expect(foggedAt(e, 0, 5)).toBe(false);
+    expect(foggedAt(e, 0, 6)).toBe(false);
+    expect(foggedAt(e, 1, 6)).toBe(false);
+    expect(foggedAt(e, 0, 7)).toBe(true); // 两列之外仍被雾遮
+  });
+  it('路灯花入睡或被吃掉后迷雾恢复', () => {
+    const e = new Engine(31, []);
+    e.time = 30;
+    const lamp = e.addPlant('lantern', 0, 5);
+    expect(foggedAt(e, 0, 5)).toBe(false);
+    lamp.sleep = true;
+    expect(foggedAt(e, 0, 5)).toBe(true);
+    lamp.sleep = false;
+    expect(foggedAt(e, 0, 5)).toBe(false);
+    lamp.hp = 0;
+    expect(foggedAt(e, 0, 5)).toBe(true);
+  });
+  it('三叶草吹走气球僵尸并清雾约 20 秒', () => {
+    const e = new Engine(34, []);
+    const z = target(e, 'balloon', 1);
+    e.addPlant('blover', 0, 0); run(e, 1.1);
+    expect(z.hp).toBeLessThanOrEqual(0);
+    expect(e.fogClear).toBeGreaterThan(19);
   });
   it('六行地图中心与点击格子一致，水路严格为中间两行', () => {
     const e = new Engine(31, []);

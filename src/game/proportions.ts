@@ -1,4 +1,6 @@
 /** Visual proportions do not change tile occupancy or combat range. */
+import { spriteScaleCorrection } from "./sprite-scale.generated";
+
 const plants: Record<string, number> = {
   chomper: 1.35,
   squash: 1.18,
@@ -21,5 +23,14 @@ const zombies: Record<string, number> = {
   bobsled: 1.25,
   imp: 0.67,
 };
-export const plantScale = (id: string) => plants[id] ?? 1;
-export const zombieScale = (id: string) => zombies[id] ?? 1;
+/**
+ * 这些僵尸的战斗形象来自动作图集（walk-*.webp），与立绘裁切无关，
+ * 因此不能套用立绘的显示补偿，否则会平白改变它们的大小。
+ */
+const sheetZombies = new Set(["basic", "cone", "bucket", "garg", "pole"]);
+const fix = (key: string, fromSheet: boolean) =>
+  fromSheet ? 1 : (spriteScaleCorrection[key] ?? 1);
+
+export const plantScale = (id: string) => (plants[id] ?? 1) * fix("p-" + id, false);
+export const zombieScale = (id: string) =>
+  (zombies[id] ?? 1) * fix("z-" + id, sheetZombies.has(id));
