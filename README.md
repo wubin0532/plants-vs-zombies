@@ -11,7 +11,7 @@ npm ci
 npm run dev
 ```
 
-打开 http://localhost:5173 。生产构建与本地预览：
+生产构建与本地预览：
 
 ```sh
 npm test
@@ -30,7 +30,7 @@ npm run preview
 - 接口：`POST /api/auth/register|login|logout`、`GET /api/me`、`GET|PUT /api/save`、`GET /api/health`。密码用 scrypt 哈希，会话为 HMAC 签名 Cookie（`HttpOnly; SameSite=Lax`，30 天）。
 - 默认最多 5 个账号，可用环境变量 `MAX_USERS` 调整。通过 HTTPS 访问时给后端加上 `COOKIE_SECURE=1`；纯 HTTP 局域网访问保持不设置，否则浏览器不会保存登录 Cookie。
 
-#### 部署到飞牛 NAS（Docker）
+#### 示例：部署到Docker
 
 Nginx 以容器运行，后端 `garden-api` 单独一个容器，Nginx 把 `/api/` 反代到宿主机 `8787`。
 
@@ -42,7 +42,7 @@ Nginx 以容器运行，后端 `garden-api` 单独一个容器，Nginx 把 `/api
 
    它会：上传 `server/*.mjs` 到 `/vol1/1000/Docker/garden-server/`，在 NAS 上以 `admin(1000:1001)` 身份启动 `garden-api`，并在 `nginx -t` 校验通过后重载 Nginx。
 
-2. 也可在 NAS 上单独执行启动脚本：
+2. 也可在 Docker 上单独执行启动脚本：
 
    ```sh
    ssh -t fnos 'bash /vol1/1000/Docker/garden-server/remote-garden-setup.sh'
