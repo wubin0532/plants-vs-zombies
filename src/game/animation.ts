@@ -41,6 +41,8 @@ export function plantMotionFrame(p: Plant) {
   const frames = motionPlantFrames[p.id] ?? 16;
   const attack = p.attackAge ?? 10;
   if (frames <= 8) {
+    if (p.hurt && p.hurt > 0)
+      return 4 + Math.min(3, Math.floor(Math.min(1, Math.max(0, 1 - p.hurt / 0.2)) * 4));
     if (attack < 0.4) return 4 + Math.min(3, Math.floor((attack / 0.4) * 4));
     return Math.floor(p.age * 6) % 4;
   }

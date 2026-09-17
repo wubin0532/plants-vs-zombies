@@ -1398,6 +1398,7 @@ export class Engine {
         )
         .sort((a, b) => a.x - b.x);
       if (d.kind === "sun" && p.timer <= 0) {
+        p.attackAge = 0;
         this.token(
           p.col,
           p.row,
@@ -1414,10 +1415,12 @@ export class Engine {
         if (p.id === "goldmagnet") {
           // 金币 16 秒消失，24 秒的固定间隔会漏币：有币快消失时立刻收取。
           if (p.timer <= 0 || this.tokens.some((t) => t.coin && t.age > 13)) {
+            p.attackAge = 0;
             for (const t of [...this.tokens]) if (t.coin) this.collect(t.uid);
             p.timer = 24;
           }
         } else if (p.timer <= 0) {
+          p.attackAge = 0;
           this.token(p.col, p.row, 10, true);
           p.timer = 24;
         }
