@@ -10,9 +10,13 @@ import {
   zombieFrame,
   jumpHeight,
   sequenceZombies,
+  motionZombies,
+  motionPlants,
+  isMotionPlant,
   zombieAppearance,
   motionSheet,
   chomperFrame,
+  plantMotionFrame,
   articulatedPlants,
   plantHeadPose,
   zombiePose,
@@ -81,11 +85,23 @@ export class GardenScene extends Phaser.Scene {
         `${import.meta.env.BASE_URL}assets/animation/${id}.webp`,
         motionSheet(id),
       );
+    for (const id of motionZombies)
+      this.load.spritesheet(
+        `walk-${id}`,
+        `${import.meta.env.BASE_URL}assets/animation/${id}.webp`,
+        motionSheet(id),
+      );
     this.load.spritesheet(
       "chomper-motion",
       `${import.meta.env.BASE_URL}assets/animation/chomper.webp`,
       { frameWidth: 256, frameHeight: 256 },
     );
+    for (const id of motionPlants)
+      this.load.spritesheet(
+        `plantanim-${id}`,
+        `${import.meta.env.BASE_URL}assets/animation/${id}.webp`,
+        { frameWidth: 256, frameHeight: 256 },
+      );
     for (const p of plants) this.load.image(p.id, plantImage(p.id));
     for (const element of ["ice", "electric"] as const) this.load.image("b-" + element, bowlImage(element));
     for (const z of zombies) this.load.image("z-" + z.id, zombieImage(z.id));
@@ -421,7 +437,8 @@ export class GardenScene extends Phaser.Scene {
       const key = "p" + p.uid;
       keep.add(key);
       const base = p.layer === "base",
-        bodyScale = plantScale(p.id);
+        bodyScale = plantScale(p.id),
+        motion = isMotionPlant(p.id);
       const stable =
         base ||
         [
@@ -446,7 +463,11 @@ export class GardenScene extends Phaser.Scene {
           : 0;
       const obj = this.sprite(
         key,
-        p.id === "chomper" ? "chomper-motion" : p.id,
+        p.id === "chomper"
+          ? "chomper-motion"
+          : motion
+            ? "plantanim-" + p.id
+            : p.id,
         this.x(p.col) + (p.hurt ? Math.sin(p.hurt * 65) * 3 : 0),
         feetY(p.row, e.level.rows) - (base ? 0 : 0),
         (base ? 90 : 86) * bodyScale,
@@ -457,16 +478,22 @@ export class GardenScene extends Phaser.Scene {
         obj
           .setFrame(chomperFrame(p))
           .setDisplaySize(86 * bodyScale, 86 * bodyScale);
+      else if (motion)
+        obj
+          .setFrame(plantMotionFrame(p))
+          .setDisplaySize(86 * bodyScale, 86 * bodyScale);
       obj
-        .setOrigin(0.5, p.id === "chomper" ? 249 / 256 : 0.95)
+        .setOrigin(0.5, p.id === "chomper" || motion ? 249 / 256 : 0.95)
         .setAlpha(p.sleep ? 0.65 : 1);
-      obj.setScale(
-        obj.scaleX * (1 + breathing + anticipation - recoil * 0.065),
-        obj.scaleY * (1 - breathing - anticipation + recoil * 0.045),
-      );
-      obj.setAngle(
-        stable ? 0 : Math.sin(e.time * 2 + p.uid) * 0.7 - recoil * 2,
-      );
+      if (!motion) {
+        obj.setScale(
+          obj.scaleX * (1 + breathing + anticipation - recoil * 0.065),
+          obj.scaleY * (1 - breathing - anticipation + recoil * 0.045),
+        );
+        obj.setAngle(
+          stable ? 0 : Math.sin(e.time * 2 + p.uid) * 0.7 - recoil * 2,
+        );
+      }
       if (cold && !base) {
         const frost = cold * (0.18 + Math.sin(e.time * 5 + p.uid) * 0.06);
         g.lineStyle(2, 0xe4fbff, frost);
@@ -475,7 +502,7 @@ export class GardenScene extends Phaser.Scene {
         g.fillCircle(obj.x - 22 * bodyScale, obj.y - 66 * bodyScale, 3);
         g.fillCircle(obj.x + 23 * bodyScale, obj.y - 35 * bodyScale, 2);
       }
-      if (articulatedPlants.has(p.id)) {
+      if (articulatedPlants.has(p.id) && !motion) {
         const texture = this.textures.get(p.id);
         if (!texture.has("roots")) {
           texture.add("roots", 0, 0, 104, 160, 56);
@@ -493,7 +520,7 @@ export class GardenScene extends Phaser.Scene {
           .setDisplaySize(160 * unit * pose.scaleX, 108 * unit * pose.scaleY)
           .setAngle(pose.angle).setAlpha(p.sleep ? 0.65 : 1);
       }
-      if (!articulatedPlants.has(p.id) && p.id !== 'chomper') {
+      if (!articulatedPlants.has(p.id) && p.id !== 'chomper' && !motion) {
         const pose = plantBodyPose(p);
         obj.setScale(obj.scaleX*pose.scaleX,obj.scaleY*pose.scaleY).setAngle(obj.angle+pose.angle);
       }

@@ -1,0 +1,46 @@
+/** 由 scripts/prepare-motion.mjs 生成，请勿手改。id → 帧数。 */
+export const motionZombieFrames: Record<string, number> = {
+  "dancer": 20,
+  "backup": 12,
+  "football": 12,
+  "paper": 12,
+  "flag": 12,
+  "screen": 12,
+  "imp": 12,
+  "ladder": 12,
+  "pogo": 12,
+  "digger": 12,
+  "yeti": 12,
+  "jack": 12,
+  "zomboni": 12,
+  "bobsled": 12,
+  "catapult": 12,
+  "boss": 12,
+  "ducky": 12,
+  "snorkel": 12,
+  "dolphin": 12,
+  "balloon": 12,
+  "bungee": 12
+};
+
+export const motionPlantFrames: Record<string, number> = {
+  "pea": 16,
+  "snowpea": 16,
+  "repeater": 16,
+  "three": 16,
+  "split": 16,
+  "gatling": 16,
+  "cactus": 16,
+  "star": 16,
+  "puff": 16,
+  "fume": 16,
+  "scaredy": 16,
+  "sea": 16,
+  "gloom": 16,
+  "arc": 16,
+  "cabbage": 16,
+  "kernel": 16,
+  "melon": 16,
+  "winter": 16,
+  "cob": 16
+};

@@ -1,5 +1,6 @@
 import type Phaser from "phaser";
 import type { Zombie, Plant } from "./engine";
+import { motionZombieFrames, motionPlantFrames } from "./motion-manifest.generated";
 const vehicles = new Set(["zomboni", "bobsled", "catapult", "boss"]);
 const floats = new Set(["ducky", "snorkel", "dolphin", "balloon", "bungee"]);
 // Padding keeps swinging hands and feet inside their own atlas frame.
@@ -12,10 +13,21 @@ export const sequenceZombies = [
   "garg",
   "pole",
 ] as const;
+/** 用 AI 逐帧动作图集替换程序烘焙的僵尸；清单由 prepare-motion 生成，缺图不会加载。 */
+export const motionZombies = Object.keys(motionZombieFrames);
+export const isMotionZombie = (id: string) => id in motionZombieFrames;
+/**
+ * 植物动作图集：16 帧为「待机 0-7 / 蓄力 8-11 / 攻击 12-15」，
+ * 8 帧为「待机 0-3 / 触发 4-7」。清单只包含已出图的角色。
+ */
+export const motionPlants = Object.keys(motionPlantFrames);
+export const isMotionPlant = (id: string) => id in motionPlantFrames;
 export const motionSheet = (id: string) =>
   ["garg", "pole"].includes(id)
     ? { frameWidth: 320, frameHeight: 320 }
-    : { frameWidth: 192, frameHeight: 256 };
+    : isMotionZombie(id)
+      ? { frameWidth: bakedFrame.width, frameHeight: bakedFrame.height }
+      : { frameWidth: 192, frameHeight: 256 };
 export function chomperFrame(p: Plant) {
   if (p.chomp) return 4 + Math.min(3, Math.floor((p.chomp.elapsed / 0.6) * 4));
   if (p.digest !== undefined && p.digest > 0)
@@ -23,6 +35,19 @@ export function chomperFrame(p: Plant) {
   if (p.timer > 0 && p.timer <= 0.6)
     return 12 + Math.min(3, Math.floor(((0.6 - p.timer) / 0.6) * 4));
   return Math.floor(p.age * 4) % 4;
+}
+/** 植物动作帧：8 帧组「触发 4-7 > 待机 0-3」，16 帧组「攻击 12-15 > 蓄力 8-11 > 待机 0-7」。 */
+export function plantMotionFrame(p: Plant) {
+  const frames = motionPlantFrames[p.id] ?? 16;
+  const attack = p.attackAge ?? 10;
+  if (frames <= 8) {
+    if (attack < 0.4) return 4 + Math.min(3, Math.floor((attack / 0.4) * 4));
+    return Math.floor(p.age * 6) % 4;
+  }
+  if (attack < 0.4) return 12 + Math.min(3, Math.floor((attack / 0.4) * 4));
+  if (p.timer > 0 && p.timer < 0.35)
+    return 8 + Math.min(3, Math.floor(((0.35 - p.timer) / 0.35) * 4));
+  return Math.floor(p.age * 6) % 8;
 }
 export function zombieAppearance(z: Zombie) {
   const id =
@@ -39,6 +64,17 @@ export function zombieAppearance(z: Zombie) {
       height: 160,
       origin: 313 / 320,
       extent: id === "garg" ? 96 : 118,
+    };
+  if (isMotionZombie(id))
+    return {
+      id,
+      natural: false,
+      texture: "walk-" + id,
+      width: 85 * bakedFrame.width / 160,
+      height: 106 * bakedFrame.height / 200,
+      // 动作图集由 prepare-motion 统一贴底到 frameHeight-7，脚底锚点随之改变。
+      origin: (bakedFrame.height - 7) / bakedFrame.height,
+      extent: 106,
     };
   return {
     id,
@@ -70,6 +106,11 @@ export function zombieFrame(z: Zombie, natural = zombieAppearance(z).natural) {
     if (z.action === "eat")
       return 20 + (Math.floor((z.actionTime ?? z.age) * 6) % 4);
     return (z.jumped ? 12 : 0) + (Math.floor(z.motion / 2.6) % 8);
+  }
+  if (isMotionZombie(z.id)) {
+    if (z.action === "eat" || (z.id === "catapult" && z.action === "special"))
+      return 8 + (Math.floor((z.actionTime ?? z.age) * 6) % 4);
+    return Math.floor(z.motion / 2.6) % 8;
   }
   if (natural)
     return z.action === "eat"

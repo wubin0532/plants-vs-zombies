@@ -1,5 +1,6 @@
 /** Visual proportions do not change tile occupancy or combat range. */
 import { spriteScaleCorrection } from "./sprite-scale.generated";
+import { isMotionPlant, isMotionZombie } from "./animation";
 
 const plants: Record<string, number> = {
   chomper: 1.35,
@@ -31,6 +32,8 @@ const sheetZombies = new Set(["basic", "cone", "bucket", "garg", "pole"]);
 const fix = (key: string, fromSheet: boolean) =>
   fromSheet ? 1 : (spriteScaleCorrection[key] ?? 1);
 
-export const plantScale = (id: string) => (plants[id] ?? 1) * fix("p-" + id, false);
+export const plantScale = (id: string) =>
+  (plants[id] ?? 1) * fix("p-" + id, isMotionPlant(id));
 export const zombieScale = (id: string) =>
-  (zombies[id] ?? 1) * fix("z-" + id, sheetZombies.has(id));
+  (zombies[id] ?? 1) *
+  fix("z-" + id, sheetZombies.has(id) || isMotionZombie(id));
