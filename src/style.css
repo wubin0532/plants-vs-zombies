@@ -3517,6 +3517,107 @@ body.battle-fullscreen {
   background: #16240fad;
 }
 .immersive .menu-icon { width: 22px; height: 22px; }
+/* ==========================================================================
+   大屏（桌面显示器）沉浸布局放大
+   手机/平板视口宽度 < 1500px，完全不命中本段。--u 是按视口缩放的"设计单位"：
+   横向随 vw、纵向随 vh 取较小者以保持比例；1500×900 ≈1.26×，1920×1080 ≈1.5×，
+   2560×1440 ≈2×。
+   ========================================================================== */
+@media (min-width: 1500px) and (orientation: landscape) {
+  .immersive {
+    --u: clamp(1px, min(0.095vw, 0.12vh), 2.1px);
+  }
+  .immersive .seed-tray {
+    width: calc(var(--u) * 68);
+    gap: calc(var(--u) * 4);
+    padding: calc(var(--u) * 6) calc(var(--u) * 5);
+    border-radius: calc(var(--u) * 12);
+    max-height: calc(
+      100% - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - var(--u) * 44
+    );
+  }
+  .immersive .sun-counter {
+    height: calc(var(--u) * 34);
+    flex: 0 0 calc(var(--u) * 34);
+  }
+  .immersive .sun-counter strong { font-size: calc(var(--u) * 17); }
+  .immersive .sun-icon { width: calc(var(--u) * 17); height: calc(var(--u) * 17); }
+  .immersive .coin-counter {
+    height: calc(var(--u) * 28);
+    min-height: calc(var(--u) * 28);
+    flex: 0 0 calc(var(--u) * 28);
+  }
+  .immersive .coin-counter strong { font-size: calc(var(--u) * 14); }
+  .immersive .coin-icon { width: calc(var(--u) * 15); height: calc(var(--u) * 15); }
+  .immersive .battle-seeds { gap: calc(var(--u) * 4); }
+  .immersive .battle-seed {
+    grid-template-rows: calc(var(--u) * 29) calc(var(--u) * 10) calc(var(--u) * 11);
+    flex: 0 0 calc(var(--u) * 54);
+    height: calc(var(--u) * 54);
+    padding: calc(var(--u) * 2);
+    gap: calc(var(--u) * 1);
+    border-width: calc(var(--u) * 2);
+    border-radius: calc(var(--u) * 5);
+  }
+  .immersive .battle-seed img { width: calc(var(--u) * 34); height: calc(var(--u) * 29); }
+  .immersive .battle-seed > span:not(.key),
+  .immersive .battle-seed strong { font-size: calc(var(--u) * 9); }
+  .immersive .shovel {
+    flex: 0 0 calc(var(--u) * 38);
+    min-height: calc(var(--u) * 38);
+    height: calc(var(--u) * 38);
+    padding: calc(var(--u) * 2);
+    gap: calc(var(--u) * 4);
+  }
+  .immersive .shovel .shovel-icon { width: calc(var(--u) * 20); height: calc(var(--u) * 20); }
+  .immersive .shovel span { font-size: calc(var(--u) * 9); }
+  .immersive .garden-tool {
+    height: calc(var(--u) * 40);
+    min-height: calc(var(--u) * 40);
+    flex: 0 0 calc(var(--u) * 40);
+    gap: calc(var(--u) * 1);
+    padding: calc(var(--u) * 2);
+  }
+  .immersive .garden-tool .tool-icon { width: calc(var(--u) * 18); height: calc(var(--u) * 18); }
+  .immersive .garden-tool strong { font-size: calc(var(--u) * 11); }
+  .immersive .hammer-tray { gap: calc(var(--u) * 4); }
+  .immersive .hammer-tray button { min-height: calc(var(--u) * 52); }
+  .immersive .game-status {
+    height: calc(var(--u) * 20);
+    padding: 0 calc(var(--u) * 12);
+    border-radius: calc(var(--u) * 10);
+    font-size: calc(var(--u) * 10);
+    gap: calc(var(--u) * 12);
+    max-width: min(72%, calc(var(--u) * 560));
+  }
+  .immersive .game-status .wave-track { gap: calc(var(--u) * 7); }
+  .immersive .game-status .wave-track > div { width: calc(var(--u) * 120); }
+  .immersive .game-message {
+    font-size: calc(var(--u) * 12);
+    padding: calc(var(--u) * 8) calc(var(--u) * 12);
+  }
+  .immersive .battle-menu-button {
+    width: calc(var(--u) * 42);
+    height: calc(var(--u) * 42);
+    border-radius: calc(var(--u) * 12);
+  }
+  .immersive .menu-icon { width: calc(var(--u) * 22); height: calc(var(--u) * 22); }
+  .immersive .weather-badge {
+    font-size: calc(var(--u) * 13);
+    padding: calc(var(--u) * 6) calc(var(--u) * 12);
+    border-radius: calc(var(--u) * 18);
+  }
+  .immersive .fog-clear-badge {
+    font-size: calc(var(--u) * 12);
+    padding: calc(var(--u) * 5) calc(var(--u) * 9);
+    border-radius: calc(var(--u) * 8);
+  }
+  .immersive .guide-bubble {
+    font-size: calc(var(--u) * 12);
+    padding: calc(var(--u) * 8) calc(var(--u) * 12);
+    border-radius: calc(var(--u) * 10);
+  }
+}
 /* 竖屏手机：全屏旋转引导。 */
 .rotate-gate {
   position: absolute;
