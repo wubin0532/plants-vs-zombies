@@ -10,6 +10,7 @@
     "test": "vitest run",
     "assets": "node scripts/prepare-mist.mjs && node scripts/prepare-props.mjs && node scripts/prepare-presentation.mjs && node scripts/prepare-backgrounds.mjs && node scripts/prepare-assets.mjs && node scripts/prepare-motion.mjs && node scripts/prepare-cards.mjs",
     "assets:cards": "node scripts/prepare-cards.mjs",
+    "assets:icons": "node scripts/prepare-icons.mjs",
     "assets:mist": "node scripts/prepare-mist.mjs",
     "assets:backgrounds": "node scripts/prepare-backgrounds.mjs",
     "assets:portraits": "node scripts/prepare-assets.mjs",

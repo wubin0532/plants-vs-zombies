@@ -3251,3 +3251,333 @@ body.high-contrast .battle-menu-button {
     transform: none;
   }
 }
+
+/* ==========================================================================
+   战斗沉浸布局 v2（移动端最大化）
+   战场铺满可视高度，种子栏与状态栏浮在棋盘四周留白上；手机竖屏改用旋转引导。
+   本段在文件末尾，用于覆盖上方历史沉浸规则（旧规则保留作兼容参考）。
+   ========================================================================== */
+body.battle-fullscreen {
+  overflow: hidden;
+  overscroll-behavior: none;
+  background: #0f1b12;
+  -webkit-tap-highlight-color: transparent;
+}
+.app-shell.immersive {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  background: #0f1b12;
+  z-index: 100;
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.app-shell.immersive > .topbar,
+.app-shell.immersive > footer,
+.immersive .game-heading,
+.immersive .keyboard-hint,
+.immersive .wave-details,
+.immersive .mechanic-strip {
+  display: none !important;
+}
+.immersive main {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  display: block;
+  min-height: 0;
+}
+/* 战场铺满可视高度，由 Phaser 按 1200:690 居中缩放。 */
+.immersive .game-frame {
+  --board-left: 0px;
+  --board-top: 0px;
+  --board-w: 100%;
+  --board-h: 100%;
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 100%;
+  height: min(100dvh, 100%);
+  display: block;
+  width: auto;
+  min-width: 0;
+  min-height: 0;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: radial-gradient(120% 90% at 50% 0%, #16281a 0%, #0b140e 100%);
+  overflow: hidden;
+}
+.immersive .canvas-wrap {
+  position: absolute;
+  inset: 0;
+  width: auto;
+  height: auto;
+  aspect-ratio: auto;
+  margin: 0;
+  overflow: hidden;
+  touch-action: none;
+}
+.immersive .phaser-mount {
+  width: 100%;
+  height: 100%;
+}
+/* 种子栏浮层：落在棋盘左侧留白里；最窄的横屏机型也只压住房子装饰区。 */
+.immersive .seed-tray {
+  position: absolute;
+  z-index: 12;
+  top: calc(env(safe-area-inset-top, 0px) + 8px);
+  bottom: auto;
+  left: calc(env(safe-area-inset-left, 0px) + 6px);
+  width: 82px;
+  height: auto;
+  min-height: 0;
+  max-height: calc(
+    100% - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 44px
+  );
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 6px 5px;
+  border: 1px solid #ffffff24;
+  border-radius: 15px;
+  background: #16240fe0;
+  box-shadow: 0 12px 30px #00000059;
+  backdrop-filter: blur(3px);
+  overflow: hidden;
+}
+.immersive .sun-counter {
+  width: 100%;
+  min-width: 0;
+  height: 42px;
+  flex: 0 0 42px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0;
+}
+.immersive .sun-counter strong { font-size: 17px; color: #fff3c4; }
+.immersive .sun-counter small { display: none; }
+.immersive .sun-icon { width: 19px; height: 19px; margin: 0; }
+.immersive .coin-counter {
+  width: 100%;
+  height: 36px;
+  min-height: 36px;
+  flex: 0 0 36px;
+}
+.immersive .coin-counter::after { display: none; }
+.immersive .coin-counter strong { font-size: 16px; }
+.immersive .coin-icon { width: 18px; height: 18px; margin: 0; }
+.immersive .battle-seeds {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  flex: 0 1 auto;
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  max-height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  gap: 4px;
+  padding: 0;
+  scrollbar-width: thin;
+  touch-action: pan-y;
+}
+.immersive .battle-seed {
+  display: grid;
+  grid-template-rows: 34px 11px 12px;
+  justify-items: center;
+  align-items: center;
+  flex: 0 0 63px;
+  width: 100%;
+  min-width: 0;
+  height: 63px;
+  padding: 2px;
+  line-height: 1;
+  gap: 1px;
+}
+.immersive .battle-seed img { width: 40px; height: 34px; object-fit: contain; }
+.immersive .battle-seed > span:not(.key),
+.immersive .battle-seed strong { font-size: 10px; line-height: 1; margin: 0; }
+.immersive .battle-seed .key { display: none; }
+.immersive .shovel {
+  flex: 0 0 42px;
+  width: 100%;
+  min-height: 42px;
+  height: 42px;
+  margin: 0;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+.immersive .shovel .shovel-icon { width: 22px; height: 22px; }
+.immersive .shovel span { font-size: 10px; }
+.immersive .garden-tool {
+  width: 100%;
+  height: 44px;
+  min-height: 44px;
+  flex: 0 0 44px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  padding: 2px;
+}
+.immersive .garden-tool .tool-icon { width: 18px; height: 18px; }
+.immersive .garden-tool strong { font-size: 11px; line-height: 1; white-space: nowrap; }
+.immersive .garden-tool small,
+.immersive .garden-tool > span { display: none; }
+.immersive .hammer-tray {
+  flex-direction: column;
+  min-height: 0;
+  width: 100%;
+  gap: 4px;
+}
+.immersive .hammer-tray button { min-width: 0; min-height: 52px; }
+/* 状态栏浮层：贴底居中，不占战场高度。 */
+.immersive .game-status {
+  position: absolute;
+  z-index: 12;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 6px);
+  width: min(620px, 74%);
+  height: 26px;
+  padding: 0 12px;
+  transform: translateX(-50%);
+  border: 1px solid #ffffff1f;
+  border-radius: 13px;
+  background: #0d1808d9;
+  color: #e8eed8;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  pointer-events: none;
+}
+.immersive .game-status .wave-track { gap: 8px; }
+.immersive .game-status .wave-track > div { width: 150px; background: #ffffff26; }
+.immersive .game-status .wave-track i { background: #8dc25d; }
+.immersive .game-status .flag-mark { background: #e0574a; }
+/* 棋盘内浮层用 JS 量出的棋盘矩形定位，避免落在留白上。 */
+.immersive .game-message {
+  top: calc(var(--board-top) + 8px);
+  font-size: 12px;
+  max-width: 80%;
+  padding: 8px 12px;
+}
+.immersive .guide-bubble.anchor-sun {
+  top: calc(var(--board-top) + var(--board-h) * 0.168);
+  left: calc(var(--board-left) + var(--board-w) * 0.015);
+}
+.immersive .guide-bubble.anchor-seeds {
+  top: calc(var(--board-top) + var(--board-h) * 0.168);
+  left: calc(var(--board-left) + var(--board-w) * 0.108);
+}
+.immersive .weather-badge {
+  left: calc(var(--board-left) + var(--board-w) * 0.14);
+  top: calc(var(--board-top) + var(--board-h) * 0.035);
+}
+.immersive .fog-clear-badge {
+  display: block;
+  top: calc(var(--board-top) + 8px);
+  right: calc(100% - var(--board-left) - var(--board-w) + 10px);
+}
+/* 战斗菜单移到右上角，避开左侧种子栏与底部状态栏。 */
+.immersive .battle-menu-button {
+  left: auto;
+  right: calc(env(safe-area-inset-right, 0px) + 10px);
+  top: calc(env(safe-area-inset-top, 0px) + 10px);
+  bottom: auto;
+  width: 52px;
+  height: 46px;
+}
+/* 竖屏手机：全屏旋转引导。 */
+.rotate-gate {
+  position: absolute;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px;
+  background: radial-gradient(120% 90% at 50% 30%, #20311d 0%, #0f1b12 72%);
+}
+.rotate-card {
+  max-width: 320px;
+  text-align: center;
+  color: #eef1de;
+}
+.rotate-card h2 { font-size: 22px; margin: 20px 0 10px; color: #eef1de; }
+.rotate-card p { font-size: 13px; line-height: 1.9; color: #b7c2a0; margin: 0 0 24px; }
+.rotate-card .primary { width: 100%; }
+.rotate-card .text-button { color: #9aa886; }
+.rotate-phone {
+  width: 62px;
+  height: 106px;
+  margin: 0 auto;
+  border: 3px solid #d7e5b3;
+  border-radius: 12px;
+  box-shadow: 0 0 0 6px #ffffff12;
+  animation: rotate-hint 2.2s ease-in-out infinite;
+}
+.rotate-phone i {
+  display: block;
+  width: 20px;
+  height: 3px;
+  margin: 8px auto 0;
+  border-radius: 2px;
+  background: #d7e5b3;
+}
+@keyframes rotate-hint {
+  0%, 18% { transform: rotate(0deg); }
+  62%, 100% { transform: rotate(-90deg); }
+}
+/* iPhone“添加到主屏幕”引导（要盖在旋转引导之上）。 */
+.install-tip {
+  position: absolute;
+  z-index: 340;
+  top: calc(env(safe-area-inset-top, 0px) + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(440px, 88%);
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid #e2c987;
+  border-radius: 12px;
+  background: #fff8e6f2;
+  color: #6b5423;
+  font-size: 12px;
+  line-height: 1.7;
+  box-shadow: 0 10px 26px #00000047;
+}
+.install-tip button {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  font-size: 18px;
+  line-height: 1;
+  color: #8a7434;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rotate-phone { animation: none; }
+}
+

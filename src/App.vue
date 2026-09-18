@@ -78,8 +78,31 @@ const chosen = ref<string[]>([]),
   imitate = ref("pea"),
   booting = ref(false),
   bootError = ref("");
+// 移动端方向与全屏：手机竖屏改用旋转引导，横屏让战场吃满可视高度。
+const viewport = ref({ w: window.innerWidth, h: window.innerHeight });
+const allowPortraitPlay = ref(false);
+const standalone = ref(false);
+const installTip = ref(false);
+const isPortrait = computed(() => viewport.value.h > viewport.value.w);
+const isPhone = computed(
+  () => Math.min(viewport.value.w, viewport.value.h) <= 620,
+);
+const portraitGate = computed(
+  () =>
+    full.value &&
+    page.value === "game" &&
+    isPortrait.value &&
+    isPhone.value &&
+    !allowPortraitPlay.value,
+);
+const isIOS =
+  /iP(hone|ad|od)/.test(navigator.userAgent) ||
+  (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 let game: Awaited<ReturnType<typeof mountGame>> | undefined;
-let gameGeneration = 0, starting = false;
+let gameGeneration = 0,
+  starting = false,
+  viewportTimer = 0;
+let boardObserver: ResizeObserver | undefined;
 let lastRestartKey = -1e9;
 const audio = new GardenAudio();
 const lessonOpen = ref(false);
@@ -422,6 +445,8 @@ function chooseLevel(id: number) {
   audio.stop();
   game?.destroy(true);
   game = undefined;
+  boardObserver?.disconnect();
+  boardObserver = undefined;
   engine.value = undefined;
   playing.value = false;
   booting.value = false;
@@ -595,8 +620,11 @@ async function start() {
       return;
     }
     booting.value = false;
-    if (generation === gameGeneration) game = mounted;
-    else mounted.destroy(true);
+    if (generation === gameGeneration) {
+      game = mounted;
+      observeBoard();
+      syncViewport();
+    } else mounted.destroy(true);
   } finally {
     if (generation === gameGeneration) starting = false;
   }
@@ -608,6 +636,8 @@ function home() {
   audio.stop();
   game?.destroy(true);
   game = undefined;
+  boardObserver?.disconnect();
+  boardObserver = undefined;
   engine.value = undefined;
   page.value = "home";
   playing.value = false;
@@ -771,6 +801,7 @@ function sound() {
 }
 async function exitBattleFullscreen() {
   full.value = false;
+  installTip.value = false;
   if (document.fullscreenElement)
     await document.exitFullscreen().catch(() => {});
   try {
@@ -778,6 +809,7 @@ async function exitBattleFullscreen() {
   } catch {
     /* Optional browser API. */
   }
+  syncViewport();
 }
 async function fullscreen() {
   if (full.value) {
@@ -786,8 +818,12 @@ async function fullscreen() {
   }
   full.value = true;
   await nextTick();
+  let native = false;
   try {
-    await document.documentElement.requestFullscreen?.();
+    if (document.documentElement.requestFullscreen) {
+      await document.documentElement.requestFullscreen();
+      native = true;
+    }
   } catch {
     /* Keep immersive layout when native fullscreen is unavailable. */
   }
@@ -800,11 +836,69 @@ async function fullscreen() {
   } catch {
     /* Manual landscape remains supported. */
   }
-  window.dispatchEvent(new Event("resize"));
+  // iPhone Safari 不支持网页元素全屏：引导“添加到主屏幕”，从桌面图标启动才是无地址栏的真全屏。
+  if (!native && isIOS && !standalone.value) installTip.value = true;
+  syncViewport();
+}
+/** 旋转引导里的“尝试全屏 / 旋转”：只请求，不因已在沉浸模式就把全屏关掉。 */
+async function tryRotate() {
+  let native = !!document.fullscreenElement;
+  try {
+    if (!native && document.documentElement.requestFullscreen) {
+      await document.documentElement.requestFullscreen();
+      native = true;
+    }
+  } catch {
+    /* Keep immersive layout when native fullscreen is unavailable. */
+  }
+  try {
+    await (
+      screen.orientation as ScreenOrientation & {
+        lock?: (orientation: string) => Promise<void>;
+      }
+    ).lock?.("landscape");
+  } catch {
+    /* iPhone 只能手动旋转。 */
+  }
+  if (!native && isIOS && !standalone.value) installTip.value = true;
+  syncViewport();
 }
 function fullscreenChanged() {
   if (!document.fullscreenElement) full.value = false;
+  syncViewport();
+}
+/** iOS 旋转、地址栏收放后布局会晚一拍，延迟通知 Phaser 重算画布。 */
+function syncViewport() {
+  viewport.value = { w: window.innerWidth, h: window.innerHeight };
+  window.clearTimeout(viewportTimer);
+  viewportTimer = window.setTimeout(refreshBoardScale, 250);
+}
+function refreshBoardScale() {
   window.dispatchEvent(new Event("resize"));
+  game?.scale?.refresh?.();
+  updateBoardVars();
+}
+/** 把画布在整屏里的真实矩形写进 CSS 变量，供浮动提示定位。 */
+function updateBoardVars() {
+  const canvas = gameEl.value?.querySelector("canvas");
+  const frame = document.querySelector<HTMLElement>(".game-frame");
+  if (!canvas || !frame) return;
+  const c = canvas.getBoundingClientRect();
+  const f = frame.getBoundingClientRect();
+  frame.style.setProperty("--board-left", `${c.left - f.left}px`);
+  frame.style.setProperty("--board-top", `${c.top - f.top}px`);
+  frame.style.setProperty("--board-w", `${c.width}px`);
+  frame.style.setProperty("--board-h", `${c.height}px`);
+}
+function observeBoard() {
+  boardObserver?.disconnect();
+  const frame = document.querySelector<HTMLElement>(".game-frame");
+  const canvas = gameEl.value?.querySelector("canvas");
+  if (!frame || !canvas) return;
+  boardObserver = new ResizeObserver(updateBoardVars);
+  boardObserver.observe(frame);
+  boardObserver.observe(canvas);
+  updateBoardVars();
 }
 watch(full, (value) => {
   document.body.classList.toggle("battle-fullscreen", value);
@@ -935,18 +1029,39 @@ onMounted(() => {
   audio.volume = save.data.volume;
   audio.mix = { ...save.data.mix };
   startTipTimer();
+  standalone.value =
+    window.matchMedia?.("(display-mode: standalone)")?.matches ||
+    (navigator as Navigator & { standalone?: boolean }).standalone === true;
+  syncViewport();
   document.addEventListener("visibilitychange", visibility);
   document.addEventListener("fullscreenchange", fullscreenChanged);
+  window.addEventListener("orientationchange", syncViewport);
+  window.visualViewport?.addEventListener("resize", syncViewport);
+  try {
+    screen.orientation?.addEventListener("change", syncViewport);
+  } catch {
+    /* Optional browser API. */
+  }
   window.addEventListener("keydown", keyboard);
 });
 onBeforeUnmount(() => {
   gameGeneration++;
   game?.destroy(true);
+  boardObserver?.disconnect();
+  boardObserver = undefined;
+  window.clearTimeout(viewportTimer);
   closeDemo();
   audio.dispose();
   stopTipTimer();
   document.removeEventListener("visibilitychange", visibility);
   document.removeEventListener("fullscreenchange", fullscreenChanged);
+  window.removeEventListener("orientationchange", syncViewport);
+  window.visualViewport?.removeEventListener("resize", syncViewport);
+  try {
+    screen.orientation?.removeEventListener("change", syncViewport);
+  } catch {
+    /* Optional browser API. */
+  }
   document.body.classList.remove("battle-fullscreen");
   document.body.classList.remove("high-contrast", "font-small", "font-large");
   window.removeEventListener("keydown", keyboard);
@@ -1778,6 +1893,23 @@ onBeforeUnmount(() => {
         </p>
       </template>
     </main>
+    <div v-if="portraitGate" class="rotate-gate">
+      <div class="rotate-card">
+        <div class="rotate-phone" aria-hidden="true"><i></i></div>
+        <h2>请把手机横过来</h2>
+        <p>庭院是宽屏战场，横屏后能同时看清整条草坪和右侧的僵尸。</p>
+        <button class="primary" @click="tryRotate">尝试全屏 / 旋转</button>
+        <button class="text-button" @click="allowPortraitPlay = true">
+          竖屏也要玩
+        </button>
+      </div>
+    </div>
+    <div v-if="installTip" class="install-tip">
+      <span
+        >想要无地址栏的真全屏：iPhone 请点 Safari「分享」→「添加到主屏幕」，
+        从桌面图标进入即可。</span
+      ><button aria-label="知道了" @click="installTip = false">×</button>
+    </div>
     <footer>
       <span>一方小院，一场大冒险。</span
       ><span>Vue 3 <i>·</i> Phaser 3 <i>·</i> 本地保存</span>
