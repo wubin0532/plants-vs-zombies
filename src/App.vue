@@ -33,6 +33,7 @@ import { battleSettings, defaultOptions } from "./game/difficulty";
 import { applyDailyMods, dailyChallenge } from "./game/daily";
 import { achievementDefs, checkAchievements } from "./achievements";
 import { Engine } from "./game/engine";
+import { levelCleared, nextReplayAttempt } from "./game/replay";
 import { mountGame } from "./game/scene";
 import { GardenAudio } from "./game/audio";
 import type { SoundKind } from "./game/audio";
@@ -46,8 +47,13 @@ import {
 import { useAuth } from "./auth";
 const save = useSave();
 const auth = useAuth();
-void auth.refresh();
 save.load();
+// 会话恢复（Cookie 仍有效）时也必须先对账再允许云推送，否则旧本机档会覆盖云端新档。
+void (async () => {
+  await auth.refresh();
+  if (auth.loggedIn) await save.reconcile();
+  else save.reconciled = true;
+})();
 {
   const fresh = checkAchievements(save.data);
   if (fresh.length) {
@@ -87,14 +93,36 @@ const isPortrait = computed(() => viewport.value.h > viewport.value.w);
 const isPhone = computed(
   () => Math.min(viewport.value.w, viewport.value.h) <= 620,
 );
+const touchDevice =
+  typeof navigator !== "undefined" &&
+  typeof window !== "undefined" &&
+  (navigator.maxTouchPoints > 0 || "ontouchstart" in window);
 const portraitGate = computed(
   () =>
-    full.value &&
     page.value === "game" &&
     isPortrait.value &&
     isPhone.value &&
+    touchDevice &&
     !allowPortraitPlay.value,
 );
+// 竖屏引导盖住画面时必须暂停规则，否则僵尸会在玩家无法操作时继续推进。
+let gatePaused = false;
+watch(portraitGate, (active) => {
+  const e = engine.value;
+  if (!e || e.status !== "playing") {
+    gatePaused = false;
+    return;
+  }
+  if (active) {
+    if (!e.paused) {
+      e.paused = true;
+      gatePaused = true;
+    }
+  } else if (gatePaused) {
+    e.paused = false;
+    gatePaused = false;
+  }
+});
 const isIOS =
   /iP(hone|ad|od)/.test(navigator.userAgent) ||
   (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
@@ -455,6 +483,8 @@ function chooseLevel(id: number) {
   resultStars.value = 0;
   newAchievements.value = [];
   dailyMode.value = false;
+  allowPortraitPlay.value = false;
+  gatePaused = false;
   levelId.value = id;
   modal.value = "";
   const unlocked = available.value.map((p) => p.id);
@@ -484,6 +514,8 @@ async function start() {
   const d = dailyMode.value ? daily.value : null;
   if (starting || (!d && !chosen.value.length)) return;
   starting = true;
+  allowPortraitPlay.value = false;
+  gatePaused = false;
   dailyOfficial.value = dailySalt.value === 0;
   bootError.value = "";
   const generation = ++gameGeneration;
@@ -502,8 +534,12 @@ async function start() {
       ),
     );
     if (d) applyDailyMods(engine.value, d.mods);
+    // 重玩/雪人判定在 UI 层完成并显式写入引擎；每日挑战恒为 false，
+    // 保证同一种子对所有玩家、任何存档状态都一致。
+    engine.value.replay = d ? false : levelCleared(levelId.value);
+    if (engine.value.replay) engine.value.replayAttempt = nextReplayAttempt(levelId.value);
     engine.value.imitate = imitate.value;
-    engine.value.toolsUnlocked ||= save.data.unlocked >= 6;
+    engine.value.toolsUnlocked ||= save.data.unlocked >= 5;
     const items = save.data.items;
     let usedItem = false;
     if ((items["sun-boost"] ?? 0) > 0) {
@@ -751,7 +787,7 @@ async function submitAuth() {
   if (!ok) return;
   authPassword.value = "";
   modal.value = "";
-  await save.syncOnLogin();
+  await save.reconcile();
   audio.enabled = save.data.sound;
   audio.volume = save.data.volume;
   audio.mix = { ...save.data.mix };
@@ -762,7 +798,7 @@ async function signOut() {
   save.warning = "已退出登录，进度仍保存在本机。";
 }
 async function uploadSave() {
-  await save.pushCloud();
+  await save.pushCloud(true);
 }
 async function downloadSave() {
   await save.pullCloud();
@@ -948,6 +984,7 @@ function trapModalTab(e: KeyboardEvent) {
 function visibility() {
   if (document.hidden && engine.value?.status === "playing") {
     engine.value.paused = true;
+    audio.stop();
     tick.value++;
   }
 }
@@ -1840,9 +1877,8 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <div class="game-status">
-            <span
-              ><i class="status-dot"></i>
-              {{ stats.paused ? "休息一下" : "庭院保卫中" }}</span
+            <span v-if="stats.paused"
+              ><i class="status-dot"></i>休息一下</span
             >
             <div class="wave-track">
               <span>{{ battleLevel.mode === "boss" ? "僵王生命" : "僵尸进攻" }}</span>

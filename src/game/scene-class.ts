@@ -2,7 +2,7 @@ import { FogRenderer } from "./fog-render";
 import { foggedAt, lanternsIn, torchesIn } from "./visibility";
 import { presentationAssets, presentationImage, projectileVisual, projectileHidden, plantAccent, plantBodyPose, plantIdlePose, zombieAccent, zombieVisualPose } from "./presentation";
 import Phaser from "phaser";
-import { plants, zombies, plantById } from "./content";
+import { plants, plantById, type Level } from "./content";
 import { plantImage, zombieImage, gardenImage, effectImage, bowlImage, mistImage, mowerImage, terrainImage, waterImage, tokenImage } from "./art";
 import { BOARD, cellX, cellY, feetY, cellAt, healthFraction } from "./layout";
 import {
@@ -10,8 +10,7 @@ import {
   zombieFrame,
   jumpHeight,
   sequenceZombies,
-  motionZombies,
-  motionPlants,
+  isMotionZombie,
   isMotionPlant,
   zombieAppearance,
   motionSheet,
@@ -33,6 +32,120 @@ export type RenderOptions = {
   pickupTarget?: (coin: boolean) => { x: number; y: number } | undefined;
 };
 import { Engine } from "./engine";
+
+/**
+ * Battle asset planning.  A battle only pays for the animation atlases and
+ * portraits it can actually show; everything else is deferred (see preload()).
+ * Keep this in sync with every `this.spawn()` / `addPlant()` / `addBelt()`
+ * source in engine.ts — an extra id costs bytes, a missing one is a visual bug.
+ */
+const BELT_MODES = new Set(["conveyor", "bowling", "storm", "boss", "vases"]);
+/** addBelt() strips these from the chosen deck before offering a seed. */
+const BELT_EXCLUDED = new Set([
+  "sunflower", "sunshroom", "twin", "marigold", "goldmagnet", "imitater",
+  "coffee", "grave",
+]);
+
+const isSequenceZombie = (id: string) =>
+  (sequenceZombies as readonly string[]).includes(id);
+
+/** True when a zombie walks with a loaded animation atlas (not an `anim-` bake). */
+export const hasZombieSheet = (id: string) =>
+  isMotionZombie(id) || isSequenceZombie(id);
+
+/**
+ * Zombie ids this battle can put on the lawn.  Mirrors every spawn source:
+ * scheduled waves (`level.enemies`), flag waves, the hard-coded mode spawns
+ * (whack/vases/night graves/boss summons), the replay yeti, and summoned
+ * backups/imps.  Erring high is safe; the flag id is always included because
+ * any flag wave replaces its first slot with a flag zombie.
+ */
+export function requiredZombieIds(level: Level): Set<string> {
+  const ids = new Set<string>(level.enemies);
+  ids.add("flag");
+  if (level.mode === "whack") {
+    ids.add("basic");
+    ids.add("cone");
+  }
+  if (level.mode === "vases") {
+    // Opening a vase births a basic/bucket zombie, or ducky/snorkel on water.
+    for (const id of ["basic", "cone", "bucket", "ducky", "snorkel"]) ids.add(id);
+  }
+  if (level.mode === "boss") for (const id of ["basic", "cone", "bucket"]) ids.add(id);
+  // The night grave crawl can release basic/cone/bucket regardless of the enemy list.
+  if (level.scene === "night") for (const id of ["basic", "cone", "bucket"]) ids.add(id);
+  // mixYeti() may inject the yeti into any normal battle once the level is cleared.
+  if (level.mode === "normal") ids.add("yeti");
+  if (ids.has("dancer")) ids.add("backup");
+  if (ids.has("garg")) ids.add("imp");
+  return ids;
+}
+
+/**
+ * Portrait fallbacks a battle needs.  create() bakes the cone/bucket armor
+ * overlays from these two portraits unconditionally, the boss is drawn
+ * directly from its portrait, and any zombie without an atlas is baked from
+ * its portrait — so this must stay a superset of the sheet-less ids.
+ */
+export function requiredZombiePortraits(
+  level: Level,
+  ids: Iterable<string> = requiredZombieIds(level),
+): Set<string> {
+  const portraits = new Set<string>(["cone", "bucket"]);
+  if (level.mode === "boss") portraits.add("boss");
+  for (const id of ids) if (!hasZombieSheet(id)) portraits.add(id);
+  return portraits;
+}
+
+/**
+ * Plant ids that can reach the lawn or the drag ghost this battle: the chosen
+ * deck, imitater's copy target, roof pre-planted pots, conveyor/belt pools,
+ * vase handouts and the upgrades reachable from whatever is in play.
+ */
+export function requiredPlantIds(
+  level: Level,
+  cards: readonly string[] = [],
+  imitate = "pea",
+): Set<string> {
+  const ids = new Set<string>();
+  const add = (id?: string) => {
+    if (id && plantById[id]) ids.add(id);
+  };
+  // create() seeds the (hidden) drag ghost with the pea texture before any
+  // card is selected, so it must exist even when the deck never offers it.
+  add("pea");
+  for (const id of cards) add(id);
+  if (level.scene === "roof") add("pot");
+  // Imitater plants as its chosen target; its own portrait is the drag ghost.
+  if (ids.has("imitater")) {
+    add("imitater");
+    add(plantById[imitate] && !plantById[imitate].upgrade ? imitate : "pea");
+  }
+  if (BELT_MODES.has(level.mode) && level.mode !== "vases") {
+    if (level.mode === "bowling") {
+      for (const id of ["wallnut", "cherry", "snowpea", "arc"]) add(id);
+    } else if (level.mode === "boss") {
+      for (const id of ["cabbage", "kernel", "melon", "ice", "jalapeno", "pot", "snowpea", "arc"]) add(id);
+    } else {
+      for (const id of cards) if (!BELT_EXCLUDED.has(id)) add(id);
+      add("snowpea");
+      add("arc");
+      if (level.scene === "roof") add("pot");
+      if (level.scene === "pool" || level.scene === "fog") add("lily");
+    }
+  }
+  if (level.mode === "vases") {
+    // The two sealed rewards plus whatever a clicked vase can hand back.
+    for (const id of ["snowpea", "arc", "kelp", "pea", "squash"]) add(id);
+  }
+  // Upgrades only reach the lawn while their base and the upgrade itself are in play.
+  for (const id of [...ids]) {
+    const upgrade = plantById[id]?.upgrade;
+    if (upgrade) add(upgrade);
+    for (const p of plants) if (p.upgrade === id) add(p.id);
+  }
+  return ids;
+}
 
 export class GardenScene extends Phaser.Scene {
   engine: Engine;
@@ -68,7 +181,8 @@ export class GardenScene extends Phaser.Scene {
     this.options = options;
   }
   preload() {
-    this.load.image("garden", gardenImage(this.engine.level.scene));
+    const level = this.engine.level;
+    this.load.image("garden", gardenImage(level.scene));
     for (const id of ["mist-a", "mist-b", "mist-c", "glow-lantern"] as const)
       this.load.image(id, mistImage(id));
     // 道具贴图：小推车为 4 帧精灵表（128×96/帧），其余为单图。
@@ -80,33 +194,44 @@ export class GardenScene extends Phaser.Scene {
     for (const kind of ["token-sun", "token-coin"] as const)
       this.load.image(kind, tokenImage(kind));
     for (const id of presentationAssets) this.load.image("art-" + id, presentationImage(id));
-    for (const id of sequenceZombies)
-      this.load.spritesheet(
-        `walk-${id}`,
-        `${import.meta.env.BASE_URL}assets/animation/${id}.webp`,
-        motionSheet(id),
-      );
-    for (const id of motionZombies)
-      this.load.spritesheet(
-        `walk-${id}`,
-        `${import.meta.env.BASE_URL}assets/animation/${id}.webp`,
-        motionSheet(id),
-      );
-    this.load.spritesheet(
-      "chomper-motion",
-      `${import.meta.env.BASE_URL}assets/animation/chomper.webp`,
-      { frameWidth: 256, frameHeight: 256 },
-    );
-    for (const id of motionPlants)
-      this.load.spritesheet(
-        `plantanim-${id}`,
-        `${import.meta.env.BASE_URL}assets/animation/${id}.webp`,
-        { frameWidth: 256, frameHeight: 256 },
-      );
-    for (const p of plants) this.load.image(p.id, plantImage(p.id));
     for (const element of ["ice", "electric"] as const) this.load.image("b-" + element, bowlImage(element));
-    for (const z of zombies) this.load.image("z-" + z.id, zombieImage(z.id));
     for (let i = 0; i < 16; i++) this.load.image("fx-" + i, effectImage(i));
+
+    // 只加载本局可能出现的动作图集。场上已有的角色（演示关、屋顶花盆、
+    // 传送带起始卡、罐子奖励）也一并纳入，避免首帧缺图。
+    const zombieIds = requiredZombieIds(level);
+    for (const z of this.engine.zombies) zombieIds.add(z.id);
+    for (const id of zombieIds)
+      if (hasZombieSheet(id))
+        this.load.spritesheet(
+          `walk-${id}`,
+          `${import.meta.env.BASE_URL}assets/animation/${id}.webp`,
+          motionSheet(id),
+        );
+    // 立绘只保留程序化烘焙、护甲贴图和僵王直绘需要的少数几张。
+    for (const id of requiredZombiePortraits(level, zombieIds))
+      this.load.image("z-" + id, zombieImage(id));
+
+    const plantIds = requiredPlantIds(level, this.engine.cards, this.engine.imitate);
+    for (const p of this.engine.plants) plantIds.add(p.id);
+    for (const id of this.engine.conveyor) plantIds.add(id);
+    for (const tile of this.engine.tiles) if (tile.reward) plantIds.add(tile.reward);
+    for (const id of plantIds) {
+      if (id === "chomper")
+        this.load.spritesheet(
+          "chomper-motion",
+          `${import.meta.env.BASE_URL}assets/animation/chomper.webp`,
+          { frameWidth: 256, frameHeight: 256 },
+        );
+      else if (isMotionPlant(id))
+        this.load.spritesheet(
+          `plantanim-${id}`,
+          `${import.meta.env.BASE_URL}assets/animation/${id}.webp`,
+          { frameWidth: 256, frameHeight: 256 },
+        );
+      // 拖拽预览、滚球与无动作图的植物读取同名立绘，故每株必载植物都保留它。
+      this.load.image(id, plantImage(id));
+    }
   }
   x(col: number) {
     return cellX(col);

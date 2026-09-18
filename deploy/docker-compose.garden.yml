@@ -1,10 +1,15 @@
 # 庭院保卫战 · 账号与云存档后端
-# 与现有容器并存：宿主机端口 8787 -> 容器 8787
+# 与现有容器并存：加入外部 docker 网络 garden-net，不发布宿主机端口。
+# Nginx 容器也必须接入同一网络，并把 /api/ 反代到 http://garden-api:8787。
 services:
   garden-api:
     image: node:24-alpine
     container_name: garden-api
     working_dir: /app
+    # 与 remote-garden-setup.sh 一致：以 admin(1000:1001) 运行，避免 root 写数据
+    user: "1000:1001"
+    networks:
+      - garden-net
     volumes:
       # /vol1/1000/Docker/garden-server 里直接放 store.mjs / auth.mjs / index.mjs
       - /vol1/1000/Docker/garden-server:/app/server:ro
@@ -14,6 +19,10 @@ services:
       - PORT=8787
       - DATA_DIR=/data/garden
       - MAX_USERS=5
-    ports:
-      - "8787:8787"
+      # 仅当端口不对局域网发布、且只有 Nginx 能访问时开启
+      - TRUST_PROXY=1
     restart: unless-stopped
+
+networks:
+  garden-net:
+    external: true

@@ -1,5 +1,6 @@
 import http from 'node:http';
 import {
+  bumpSessionVersion,
   createUser,
   findUserById,
   findUserByName,
@@ -10,6 +11,7 @@ import {
   writeSave,
 } from './store.mjs';
 import {
+  burnPasswordWork,
   createPasswordHash,
   createSession,
   readSession,
@@ -21,6 +23,8 @@ const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || '0.0.0.0';
 const COOKIE_NAME = 'pvz_session';
 const COOKIE_SECURE = process.env.COOKIE_SECURE === '1';
+// 仅当本服务只被受信反向代理访问时开启；开启后按 X-Real-IP（代理覆盖写）计数。
+const TRUST_PROXY = process.env.TRUST_PROXY === '1';
 const MAX_BODY = 300 * 1024;
 const MAX_SAVE = 256 * 1024;
 const WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 60 * 1000);
@@ -57,16 +61,13 @@ const authLimited = makeRateLimiter(MAX_ATTEMPTS);
 const saveWriteLimited = makeRateLimiter(MAX_SAVE_WRITES);
 
 function clientIp(req) {
-  // 信任前提：仅在 nginx 反代之后部署时可信——deploy/nginx-garden-api.conf
-  // 会写入 X-Real-IP 并把客户端地址追加进 X-Forwarded-For，此时首跳是真实客户端。
-  // 若客户端可绕过反代直连本服务，这两个头均可伪造（可用来规避限流或“转移”限流），
-  // 那种部署方式下应删掉下面的头部解析、只认 remoteAddress。
-  const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string' && forwarded.trim()) {
-    return forwarded.split(',')[0].trim();
+  // 默认只信 TCP 来源地址，防止伪造 X-Forwarded-For / X-Real-IP 绕过限流。
+  // 仅当部署在受信反代之后并显式设置 TRUST_PROXY=1 时，才采用代理覆盖写的 X-Real-IP。
+  // 注意：此时必须保证客户端无法绕过反代直连本端口（不对外发布该端口）。
+  if (TRUST_PROXY) {
+    const realIp = req.headers['x-real-ip'];
+    if (typeof realIp === 'string' && realIp.trim()) return realIp.trim();
   }
-  const realIp = req.headers['x-real-ip'];
-  if (typeof realIp === 'string' && realIp.trim()) return realIp.trim();
   return req.socket.remoteAddress || 'unknown';
 }
 
@@ -76,26 +77,53 @@ function send(res, status, payload, headers) {
     'Content-Type': 'application/json; charset=utf-8',
     'Cache-Control': 'no-store',
     'Content-Length': Buffer.byteLength(body),
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'no-referrer',
   };
   res.writeHead(status, Object.assign(base, headers || {}));
   res.end(body);
 }
 
+/** 浏览器跨站写请求的纵深防御：Origin 与 Host 不一致则拒绝。 */
+function sameOrigin(req) {
+  const origin = req.headers.origin;
+  if (!origin) return true;
+  const host = req.headers.host;
+  if (!host) return true;
+  try {
+    return new URL(origin).host === host;
+  } catch (error) {
+    return false;
+  }
+}
+
 function readBody(req) {
   return new Promise(function (resolve, reject) {
     let size = 0;
+    let settled = false;
     const chunks = [];
+    function fail(code) {
+      if (settled) return;
+      settled = true;
+      chunks.length = 0;
+      const error = new Error(code);
+      reject(error);
+      // 先让调用方有机会响应，再停止接收剩余 body（不在这里 destroy）。
+      req.pause();
+    }
     req.on('data', function (chunk) {
+      if (settled) return;
       size += chunk.length;
       if (size > MAX_BODY) {
-        const error = new Error('BODY_TOO_LARGE');
-        reject(error);
-        req.destroy();
+        fail('BODY_TOO_LARGE');
         return;
       }
       chunks.push(chunk);
     });
     req.on('end', function () {
+      if (settled) return;
+      settled = true;
       const raw = Buffer.concat(chunks).toString('utf8');
       if (!raw) {
         resolve({});
@@ -109,7 +137,11 @@ function readBody(req) {
         reject(new Error('BAD_JSON'));
       }
     });
-    req.on('error', reject);
+    req.on('error', function (error) {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    });
   });
 }
 
@@ -150,9 +182,13 @@ async function currentUser(req) {
   const cookies = parseCookies(req);
   const raw = cookies[COOKIE_NAME];
   if (!raw) return null;
-  const userId = await readSession(raw);
-  if (!userId) return null;
-  return findUserById(userId);
+  const session = await readSession(raw);
+  if (!session) return null;
+  const user = await findUserById(session.userId);
+  if (!user) return null;
+  // 会话版本不匹配说明该 token 已被登出 / 改密作废。
+  if ((Number(user.sessionVersion) || 0) !== session.version) return null;
+  return user;
 }
 
 function publicUser(user) {
@@ -180,6 +216,10 @@ async function route(req, res) {
   const pathname = rawPath.length > 1 && rawPath.endsWith('/') ? rawPath.slice(0, -1) : rawPath;
   const method = req.method || 'GET';
   const ip = clientIp(req);
+  const mutating = method === 'POST' || method === 'PUT' || method === 'DELETE';
+  if (mutating && !sameOrigin(req)) {
+    return send(res, 403, { error: '跨站请求被拒绝' });
+  }
 
   if (pathname === '/api/health' && method === 'GET') {
     const users = await loadUsers();
@@ -190,11 +230,16 @@ async function route(req, res) {
     if (authLimited(ip)) return send(res, 429, { error: '请求过于频繁，请稍后再试' });
     const body = await readBody(req);
     if (!validName(body.username)) return send(res, 400, { error: '用户名需为 1-20 位、不含空格' });
-    if (!validPassword(body.password)) return send(res, 400, { error: '密码长度需为 4-128 位' });
-    if (await findUserByName(body.username)) return send(res, 409, { error: '用户名已存在' });
+    if (!validPassword(body.password)) return send(res, 400, { error: '密码长度需为 8-128 位' });
+    const existing = await findUserByName(body.username);
+    if (existing) {
+      // 与成功路径一样付出一次 scrypt，缩小“是否已存在”的计时差。
+      await burnPasswordWork(body.password);
+      return send(res, 409, { error: '用户名已存在' });
+    }
     const hashed = await createPasswordHash(body.password);
     const user = await createUser(body.username, hashed.salt, hashed.hash);
-    const token = await createSession(user.id);
+    const token = await createSession(user.id, user.sessionVersion);
     return send(res, 200, { user: publicUser(user) }, { 'Set-Cookie': sessionCookie(token) });
   }
 
@@ -202,14 +247,22 @@ async function route(req, res) {
     if (authLimited(ip)) return send(res, 429, { error: '请求过于频繁，请稍后再试' });
     const body = await readBody(req);
     const user = await findUserByName(String(body.username || ''));
-    const ok = user ? await verifyPassword(String(body.password || ''), user) : false;
-    if (!user || !ok) return send(res, 401, { error: '用户名或密码不正确' });
+    if (!user) {
+      // 用户不存在也执行等价工作量，避免通过响应时间枚举用户名。
+      await burnPasswordWork(body.password);
+      return send(res, 401, { error: '用户名或密码不正确' });
+    }
+    const ok = await verifyPassword(String(body.password || ''), user);
+    if (!ok) return send(res, 401, { error: '用户名或密码不正确' });
     await touchLogin(user.id);
-    const token = await createSession(user.id);
+    const token = await createSession(user.id, user.sessionVersion);
     return send(res, 200, { user: publicUser(user) }, { 'Set-Cookie': sessionCookie(token) });
   }
 
   if (pathname === '/api/auth/logout' && method === 'POST') {
+    // 递增会话版本，令该用户已签发的 token 立即失效（而不仅是清 Cookie）。
+    const user = await currentUser(req);
+    if (user) await bumpSessionVersion(user.id);
     return send(res, 200, { ok: true }, { 'Set-Cookie': clearCookie() });
   }
 
@@ -235,7 +288,14 @@ async function route(req, res) {
     if (data.version !== 1 && data.version !== 2) return send(res, 400, { error: '存档版本不受支持' });
     const serialized = JSON.stringify(data);
     if (Buffer.byteLength(serialized) > MAX_SAVE) return send(res, 413, { error: '存档过大' });
-    const payload = await writeSave(user.id, data);
+    const baseUpdatedAt =
+      body.baseUpdatedAt === undefined || body.baseUpdatedAt === null
+        ? undefined
+        : Number(body.baseUpdatedAt);
+    if (baseUpdatedAt !== undefined && !Number.isFinite(baseUpdatedAt)) {
+      return send(res, 400, { error: 'baseUpdatedAt 不合法' });
+    }
+    const payload = await writeSave(user.id, data, baseUpdatedAt);
     return send(res, 200, { updatedAt: payload.updatedAt });
   }
 
@@ -244,17 +304,32 @@ async function route(req, res) {
 
 const server = http.createServer(function (req, res) {
   route(req, res).catch(function (error) {
-    if (error && error.message === 'BAD_JSON') {
-      return send(res, 400, { error: '请求内容不是合法 JSON' });
+    try {
+      if (error && error.message === 'BAD_JSON') {
+        return send(res, 400, { error: '请求内容不是合法 JSON' });
+      }
+      if (error && error.message === 'BODY_TOO_LARGE') {
+        send(res, 413, { error: '请求内容过大' });
+        // 响应已发出，再断开还在推送的请求。
+        req.destroy();
+        return;
+      }
+      if (error && error.code === 'SAVE_CONFLICT') {
+        return send(res, 409, { error: '存档已在其他设备更新', save: error.current });
+      }
+      if (error && (error.code === 'USER_EXISTS' || error.code === 'USER_LIMIT')) {
+        return send(res, 409, { error: error.message });
+      }
+      console.error('[garden-api]', error);
+      return send(res, 500, { error: '服务器内部错误' });
+    } catch (sendError) {
+      // 响应已经/无法发出时的最后兜底，避免二次抛错变成未处理拒绝。
+      try {
+        res.destroy();
+      } catch (destroyError) {
+        /* ignore */
+      }
     }
-    if (error && error.message === 'BODY_TOO_LARGE') {
-      return send(res, 413, { error: '请求内容过大' });
-    }
-    if (error && (error.code === 'USER_EXISTS' || error.code === 'USER_LIMIT')) {
-      return send(res, 409, { error: error.message });
-    }
-    console.error('[garden-api]', error);
-    return send(res, 500, { error: '服务器内部错误' });
   });
 });
 

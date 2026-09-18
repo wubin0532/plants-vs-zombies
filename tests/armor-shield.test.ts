@@ -71,6 +71,25 @@ it("正面豌豆依旧被铁栅门挡下", () => {
   expect(z.armor).toBe(z.maxArmor - 20);
 });
 
+it("寒冰豌豆被铁栅门挡下时不施加冻缓，破门后才减速", () => {
+  const hit = (armor: number) => {
+    const e = night();
+    e.spawn("screen", 0, 5);
+    const z = e.zombies[0];
+    z.armor = armor;
+    const p = e.addPlant("snowpea", 0, 2);
+    p.timer = 0;
+    for (let i = 0; i < 240 && z.hp === z.max; i++) e.step(1 / 60);
+    return z;
+  };
+  const blocked = hit(1350);
+  expect(blocked.hp, "被铁门挡下时本体不掉血").toBe(blocked.max);
+  expect(blocked.slow, "被挡下的冰豌豆不应施加冻缓").toBe(0);
+  const broken = hit(0);
+  expect(broken.hp).toBeLessThan(broken.max);
+  expect(broken.slow, "打中本体应施加冻缓").toBeGreaterThan(0);
+});
+
 it("爆炸与地刺仍然直接伤及本体（设计如此）", () => {
   const e = new Engine(1, []);
   e.spawn("football", 0, 4);

@@ -59,3 +59,15 @@ it("出怪曲线：结尾冲击明显强于开局，总量随章节递增", () =
   for (let i = 1; i < perWorld.length; i++)
     expect(perWorld[i]).toBeGreaterThan(perWorld[i - 1]);
 });
+it("导演预算不会把非新手单波减配到槽位的 60% 以下", () => {
+  for (const id of [11, 22, 33, 44]) {
+    const e = new Engine(id, []);
+    for (const wave of [e.totalWaves - 1, e.totalWaves]) {
+      const slots = e.schedule.filter((ev) => ev.wave === wave).length;
+      const plan = e.composeWave(wave);
+      expect(plan.length, `关卡 ${id} 第 ${wave} 波`).toBeGreaterThanOrEqual(
+        Math.max(1, Math.ceil(slots * 0.6)),
+      );
+    }
+  }
+});

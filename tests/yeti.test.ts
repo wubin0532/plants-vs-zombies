@@ -66,6 +66,25 @@ describe("雪人僵尸触发", () => {
     expect(seen).toBeGreaterThanOrEqual(Math.ceil(total / 3));
     expect(seen).toBeLessThanOrEqual(Math.floor((total * 2) / 3));
   });
+  it("规则引擎不读取 localStorage：伪造已通关存档也不影响每日/首玩结果", () => {
+    const g = globalThis as { localStorage?: unknown };
+    const snapshot = g.localStorage;
+    g.localStorage = {
+      getItem: () => JSON.stringify({ completed: [8, 31] }),
+      setItem: () => {},
+    };
+    try {
+      const a = new Engine(8, [], 123);
+      finish(a);
+      g.localStorage = undefined;
+      const b = new Engine(8, [], 123);
+      finish(b);
+      expect(yetis(a).length).toBe(yetis(b).length);
+      expect(a.zombies.map((z) => z.id)).toEqual(b.zombies.map((z) => z.id));
+    } finally {
+      g.localStorage = snapshot;
+    }
+  });
   it("非普通模式（传送带/保龄球/砸罐/暴风雨/博士）不出现雪人", () => {
     for (const id of [5, 10, 15, 35, 40, 50]) {
       const e = new Engine(id, [], 1);

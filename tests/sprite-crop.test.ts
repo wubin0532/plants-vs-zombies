@@ -45,8 +45,8 @@ async function contentBox(file: string) {
 
 const newReport = () => ({ splits: [] as string[], splitComps: new Set<number>() });
 
-// assets-source/ 是按 .gitignore 仅保留在本地的素材；仓库里没有时跳过切图用例，
-// 否则新克隆 / CI 会因为找不到源图集而失败（其余立绘契约测试仍然有效）。
+// 两张切图源图（assets-source/plants.webp、zombies.webp）随仓库提交，见 .gitignore。
+// 若本地缺失则跳过切图用例，但下面的立绘契约必须始终运行。
 const hasSheets = !!sourcePath("assets-source/plants") && !!sourcePath("assets-source/zombies");
 const describeSheets = hasSheets ? describe : describe.skip;
 
@@ -83,7 +83,10 @@ describeSheets("精灵图集切图", () => {
       expect(Math.max(...ys) - Math.min(...ys) + 1).toBeGreaterThan(120);
     }
   });
+});
 
+// 以下契约只依赖仓库内的生成产物（public/assets + 生成表），任何环境都必须运行。
+describe("立绘与补偿表契约", () => {
   it("全部立绘存在、画布尺寸正确、内容不贴边", async () => {
     const sets = [
       [plantIds, "p-", 160, 160],

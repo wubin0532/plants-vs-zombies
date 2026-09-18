@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vue-tsc --noEmit && vite build",
@@ -18,6 +21,7 @@
     "assets:import": "node scripts/import-redraw.mjs",
     "assets:compress": "node scripts/compress-sources.mjs",
     "verify:assets": "node scripts/verify-assets.mjs",
+    "verify:assets:strict": "node scripts/verify-assets.mjs --strict",
     "assets:verify": "node scripts/verify-assets.mjs"
   },
   "dependencies": {

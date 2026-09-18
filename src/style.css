@@ -3157,7 +3157,7 @@ body.battle-fullscreen {
 .immersive .garden-tool { width: 100%; height: 44px; min-height: 44px; flex: 0 0 44px; flex-direction: column; justify-content: center; gap: 1px; padding: 2px; font-size: 10px; }
 .immersive .garden-tool strong { font-size: 11px; line-height: 1; white-space: nowrap; }
 .immersive .garden-tool small { display: none; }
-.immersive .shovel .shovel-icon { width: 22px; height: 22px; }
+.immersive .shovel .shovel-icon { width: 20px; height: 20px; }
 .immersive .garden-tool .tool-icon { width: 18px; height: 18px; }
 .immersive .garden-tool > span { display: none; }
 .immersive .gear-icon { width: 20px; height: 20px; }
@@ -3340,7 +3340,7 @@ body.battle-fullscreen {
   top: calc(env(safe-area-inset-top, 0px) + 8px);
   bottom: auto;
   left: calc(env(safe-area-inset-left, 0px) + 6px);
-  width: 82px;
+  width: 68px;
   height: auto;
   min-height: 0;
   max-height: calc(
@@ -3351,9 +3351,9 @@ body.battle-fullscreen {
   align-items: stretch;
   gap: 4px;
   padding: 6px 5px;
-  border: 1px solid #ffffff24;
-  border-radius: 15px;
-  background: #16240fe0;
+  border: 1px solid #ffffff1c;
+  border-radius: 12px;
+  background: #16240fad;
   box-shadow: 0 12px 30px #00000059;
   backdrop-filter: blur(3px);
   overflow: hidden;
@@ -3361,8 +3361,8 @@ body.battle-fullscreen {
 .immersive .sun-counter {
   width: 100%;
   min-width: 0;
-  height: 42px;
-  flex: 0 0 42px;
+  height: 34px;
+  flex: 0 0 34px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -3372,16 +3372,16 @@ body.battle-fullscreen {
 }
 .immersive .sun-counter strong { font-size: 17px; color: #fff3c4; }
 .immersive .sun-counter small { display: none; }
-.immersive .sun-icon { width: 19px; height: 19px; margin: 0; }
+.immersive .sun-icon { width: 17px; height: 17px; margin: 0; }
 .immersive .coin-counter {
   width: 100%;
-  height: 36px;
-  min-height: 36px;
-  flex: 0 0 36px;
+  height: 28px;
+  min-height: 28px;
+  flex: 0 0 28px;
 }
 .immersive .coin-counter::after { display: none; }
-.immersive .coin-counter strong { font-size: 16px; }
-.immersive .coin-icon { width: 18px; height: 18px; margin: 0; }
+.immersive .coin-counter strong { font-size: 14px; }
+.immersive .coin-icon { width: 15px; height: 15px; margin: 0; }
 .immersive .battle-seeds {
   display: flex;
   flex-direction: column;
@@ -3400,26 +3400,26 @@ body.battle-fullscreen {
 }
 .immersive .battle-seed {
   display: grid;
-  grid-template-rows: 34px 11px 12px;
+  grid-template-rows: 29px 10px 11px;
   justify-items: center;
   align-items: center;
-  flex: 0 0 63px;
+  flex: 0 0 54px;
   width: 100%;
   min-width: 0;
-  height: 63px;
+  height: 54px;
   padding: 2px;
   line-height: 1;
   gap: 1px;
 }
-.immersive .battle-seed img { width: 40px; height: 34px; object-fit: contain; }
+.immersive .battle-seed img { width: 34px; height: 29px; object-fit: contain; }
 .immersive .battle-seed > span:not(.key),
-.immersive .battle-seed strong { font-size: 10px; line-height: 1; margin: 0; }
+.immersive .battle-seed strong { font-size: 9px; line-height: 1; margin: 0; }
 .immersive .battle-seed .key { display: none; }
 .immersive .shovel {
-  flex: 0 0 42px;
+  flex: 0 0 38px;
   width: 100%;
-  min-height: 42px;
-  height: 42px;
+  min-height: 38px;
+  height: 38px;
   margin: 0;
   padding: 2px;
   display: flex;
@@ -3427,13 +3427,13 @@ body.battle-fullscreen {
   justify-content: center;
   gap: 4px;
 }
-.immersive .shovel .shovel-icon { width: 22px; height: 22px; }
-.immersive .shovel span { font-size: 10px; }
+.immersive .shovel .shovel-icon { width: 20px; height: 20px; }
+.immersive .shovel span { font-size: 9px; }
 .immersive .garden-tool {
   width: 100%;
-  height: 44px;
-  min-height: 44px;
-  flex: 0 0 44px;
+  height: 40px;
+  min-height: 40px;
+  flex: 0 0 40px;
   flex-direction: column;
   justify-content: center;
   gap: 1px;
@@ -3455,29 +3455,32 @@ body.battle-fullscreen {
   position: absolute;
   z-index: 12;
   left: 50%;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 6px);
-  width: min(620px, 74%);
-  height: 26px;
+  top: calc(env(safe-area-inset-top, 0px) + 6px);
+  bottom: auto;
+  width: auto;
+  max-width: min(72%, 560px);
+  height: 20px;
   padding: 0 12px;
   transform: translateX(-50%);
-  border: 1px solid #ffffff1f;
-  border-radius: 13px;
-  background: #0d1808d9;
+  border: 1px solid #ffffff18;
+  border-radius: 10px;
+  background: #0d18088c;
   color: #e8eed8;
-  font-size: 11px;
+  font-size: 10px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
   gap: 12px;
+  white-space: nowrap;
   pointer-events: none;
 }
-.immersive .game-status .wave-track { gap: 8px; }
-.immersive .game-status .wave-track > div { width: 150px; background: #ffffff26; }
+.immersive .game-status .wave-track { gap: 7px; }
+.immersive .game-status .wave-track > div { width: 120px; background: #ffffff26; }
 .immersive .game-status .wave-track i { background: #8dc25d; }
 .immersive .game-status .flag-mark { background: #e0574a; }
 /* 棋盘内浮层用 JS 量出的棋盘矩形定位，避免落在留白上。 */
 .immersive .game-message {
-  top: calc(var(--board-top) + 8px);
+  top: calc(var(--board-top) + 30px);
   font-size: 12px;
   max-width: 80%;
   padding: 8px 12px;
@@ -3492,22 +3495,26 @@ body.battle-fullscreen {
 }
 .immersive .weather-badge {
   left: calc(var(--board-left) + var(--board-w) * 0.14);
-  top: calc(var(--board-top) + var(--board-h) * 0.035);
+  top: calc(var(--board-top) + var(--board-h) * 0.10);
 }
 .immersive .fog-clear-badge {
   display: block;
-  top: calc(var(--board-top) + 8px);
+  top: calc(var(--board-top) + 30px);
   right: calc(100% - var(--board-left) - var(--board-w) + 10px);
 }
 /* 战斗菜单移到右上角，避开左侧种子栏与底部状态栏。 */
 .immersive .battle-menu-button {
   left: auto;
-  right: calc(env(safe-area-inset-right, 0px) + 10px);
-  top: calc(env(safe-area-inset-top, 0px) + 10px);
+  right: calc(env(safe-area-inset-right, 0px) + 8px);
+  top: calc(env(safe-area-inset-top, 0px) + 6px);
   bottom: auto;
-  width: 52px;
-  height: 46px;
+  width: 42px;
+  height: 42px;
+  border: 1px solid #ffffff1c;
+  border-radius: 12px;
+  background: #16240fad;
 }
+.immersive .menu-icon { width: 22px; height: 22px; }
 /* 竖屏手机：全屏旋转引导。 */
 .rotate-gate {
   position: absolute;

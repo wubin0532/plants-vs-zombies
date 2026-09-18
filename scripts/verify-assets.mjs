@@ -20,6 +20,9 @@ const LOGICAL = { w: 1200, h: 690, lawnL: 210, lawnR: 1101, lawnT: 116, lawnB: 6
 const issues = [];
 const notes = [];
 const flag = (msg) => issues.push(msg);
+// 严格模式把"提示"也视为失败；CI 可用 ASSETS_STRICT=1 或 --strict 开启。
+const STRICT = process.env.ASSETS_STRICT === "1" || process.argv.includes("--strict");
+const note = (msg) => (STRICT ? issues.push(msg) : notes.push(msg));
 
 /** 读原始 RGBA */
 async function raw(path) {
@@ -79,13 +82,15 @@ for (const [kind, ids] of Object.entries(portraitIds)) {
     const footOff = a.footX - info.width / 2;      // 脚底相对画布中心的偏移
     const bottomGap = info.height - 1 - a.maxY;     // 内容底距画布底
     if (Math.abs(footOff) > 8) offs.push(`${id} ${footOff > 0 ? "+" : ""}${footOff.toFixed(0)}px`);
+    // 偏移过大属于明确的锚点错误，任何模式都直接判定失败。
+    if (Math.abs(footOff) > 40) flag(`${prefix}${id} 脚底偏离画布中心 ${footOff.toFixed(0)}px，超出可用范围`);
     if (bottomGap > 12) flag(`${prefix}${id} 内容未贴底（底部空隙 ${bottomGap}px，会整体上浮）`);
     if (a.minX <= 1 || a.maxX >= info.width - 2 || a.minY <= 1)
       flag(`${prefix}${id} 内容贴到画布边缘（可能被裁切）`);
   }
   console.log(`  ${kind}: ${ids.length} 张，脚底偏移 >8px 的 ${offs.length} 张`);
   if (offs.length) console.log(`    ${offs.join("、")}`);
-  if (offs.length > 3) notes.push(`${kind} 有 ${offs.length} 张立绘脚底偏离格心，建议加水平锚点补偿`);
+  if (offs.length > 3) note(`${kind} 有 ${offs.length} 张立绘脚底偏离格心，建议加水平锚点补偿`);
 }
 
 /* ------------------------------ 2. 小推车 ------------------------------- */
@@ -387,8 +392,13 @@ console.log("\n== VFX / 动画图集 ==");
 
 /* -------------------------------- 汇总 --------------------------------- */
 console.log("\n============================ 质检结果 ============================");
-if (!issues.length) console.log("✅ 未发现对齐/贴图问题");
-else {
+if (!issues.length) {
+  console.log(
+    notes.length
+      ? `✅ 未发现阻断性问题（另有 ${notes.length} 条提示，可用 ASSETS_STRICT=1 视为失败）`
+      : "✅ 未发现对齐/贴图问题",
+  );
+} else {
   console.log(`⚠ 发现 ${issues.length} 处问题：`);
   for (const i of issues) console.log("  · " + i);
 }
@@ -397,3 +407,5 @@ if (notes.length) {
   for (const n of notes.slice(0, 12)) console.log("  - " + n);
   if (notes.length > 12) console.log(`  ...以及另外 ${notes.length - 12} 条`);
 }
+// 有阻断性问题（或严格模式下的提示）时以非零码退出，让 CI/构建能真正拦截。
+process.exitCode = issues.length ? 1 : 0;

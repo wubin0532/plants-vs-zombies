@@ -33,7 +33,10 @@ server/data/
 
 # Internal planning/audit docs and raw asset sources (keep local only)
 docs/
-assets-source/
+# 两张切图源图随仓库提交，让精灵切图测试在干净克隆 / CI 上也能运行；其余源图仅本地保留。
+assets-source/*
+!assets-source/plants.webp
+!assets-source/zombies.webp
 PVZ重绘/
 
 # Generated offline audio exports; the soundtrack is synthesized at runtime in WebAudio
@@ -43,4 +46,3 @@ public/assets/audio/
 # Local-only notes, dev tools and scratch tests (keep local only)
 .learnings/
 art-review.html
-tests/hard-ai.test.ts

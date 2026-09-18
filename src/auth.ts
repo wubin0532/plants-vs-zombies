@@ -1,10 +1,9 @@
-import { defineStore } from "pinia";
-import { api, type AuthUser } from "./api";
+import { defineStore, getActivePinia } from "pinia";
+import { api, setUnauthorizedHandler, type AuthUser } from "./api";
 
 export const useAuth = defineStore("auth", {
   state: () => ({
     user: null as AuthUser | null,
-    ready: false,
     busy: false,
     error: "",
   }),
@@ -18,8 +17,6 @@ export const useAuth = defineStore("auth", {
         this.user = user;
       } catch {
         this.user = null;
-      } finally {
-        this.ready = true;
       }
     },
     async login(username: string, password: string) {
@@ -60,4 +57,11 @@ export const useAuth = defineStore("auth", {
       this.error = "";
     },
   },
+});
+
+// 任何接口返回 401 都视为会话失效：清掉本地登录态，让 UI 回到未登录。
+setUnauthorizedHandler(() => {
+  if (!getActivePinia()) return;
+  const auth = useAuth();
+  if (auth.user) auth.user = null;
 });

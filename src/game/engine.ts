@@ -17,7 +17,7 @@ import {
   isNight,
   type Level,
 } from "./content";
-import { levelCleared, replayShift } from "./replay";
+import { replayShiftFor } from "./replay";
 const DANGER_ZOMBIES = new Set([
   "garg",
   "football",
@@ -237,6 +237,8 @@ export class Engine {
   imitate = "pea";
   /** 本局是否为通关重玩：默认按本地存档判定，调用方可在构造后显式覆盖。 */
   replay?: boolean;
+  /** 本关重玩次数，由 UI 层在开始战斗时写入；仅用于确定性地散列雪人掷签。 */
+  replayAttempt = 0;
   /** 雪人僵尸预定出场的波次：-1 未判定，0 本局不出现。 */
   private yetiWave = -1;
   cannon = 0;
@@ -273,6 +275,7 @@ export class Engine {
   /** 每日词缀：天气事件是否循环触发。 */
   weatherLoop = false;
   private rng: number;
+  private rngSeed: number;
   private natural = 4;
   private beltTimer = 0;
   constructor(
@@ -290,7 +293,8 @@ export class Engine {
     this.bossHp = this.bossMax = 24000 * this.settings.health;
     this.cards = cards;
     this.toolsUnlocked = id >= 5;
-    this.rng = seed || 1;
+    this.rngSeed = seed || 1;
+    this.rng = this.rngSeed;
     this.mowers = Array(this.level.rows).fill(this.settings.mowers);
     this.spareMowers = Array(this.level.rows).fill(false);
     if (this.level.scene === "night") {
@@ -411,7 +415,7 @@ export class Engine {
     return "";
   }
   toolTargetReason(row: number, col: number) {
-    if (!this.toolsUnlocked) return "第 1-6 关解锁移植";
+    if (!this.toolsUnlocked) return "第 5 关解锁移植";
     if (!this.toolUses) return "本局工具次数已用完";
     if (!this.inBoard(row, col)) return "请选择草坪内的位置";
     if (this.level.mode === "whack") return "";
@@ -962,6 +966,17 @@ export class Engine {
       budget -= unitPrice[pick];
     }
     if (!plan.length) plan.push(usable[0]);
+    // 预算耗尽时的软上限：保证至少出一个下限数量的单位，
+    // 避免"排了 N 只却只出很少"的无感减配（新手关不受影响，保持原有节奏）。
+    if (!novice) {
+      const floor = Math.max(1, Math.ceil(slots * 0.6));
+      while (plan.length < floor) {
+        let cheapest = usable[0];
+        for (const id of usable)
+          if (unitPrice[id] < unitPrice[cheapest]) cheapest = id;
+        plan.push(cheapest);
+      }
+    }
     if (wave % 4 === 0 || wave === this.totalWaves) plan[0] = "flag";
     for (const id of new Set(plan)) this.unitWaves.set(id, wave);
     return plan;
@@ -975,9 +990,11 @@ export class Engine {
     if (this.level.mode !== "normal") return;
     if (this.yetiWave < 0) {
       this.yetiWave = 0;
-      if (this.replay ?? levelCleared(this.level.id)) {
-        // 种子内随机 + 重玩散列位移：同一关多次重玩各自独立约两成概率。
-        if ((this.random() + replayShift()) % 1 < 0.2) {
+      // 规则层绝不读取本机存档：是否重玩由 UI 显式写入 this.replay。
+      // 每日挑战不设置 replay，因此同一种子对所有玩家完全一致。
+      if (this.replay === true) {
+        // 种子内随机 + (seed, 重玩次数) 的确定性位移：多次重玩各自掷签且可复现。
+        if ((this.random() + replayShiftFor(this.rngSeed, this.replayAttempt)) % 1 < 0.2) {
           const total = this.totalWaves;
           const lo = Math.max(2, Math.ceil(total / 3));
           const hi = Math.max(lo, Math.floor((total * 2) / 3));
@@ -1948,8 +1965,11 @@ export class Engine {
       if (z) {
         s.hit = true;
         if (s.type === "fire") consumeIce(z);
+        const hpBefore = z.hp;
         this.damage(z, s.damage, false, isLob(s.type));
-        if (["snowpea", "winter"].includes(s.type)) applyControl(z, "iceSlow", 10);
+        // 只有伤害真正打到本体才施加减速：被铁栅门完全挡下的冰豌豆不应穿透控制。
+        if (["snowpea", "winter"].includes(s.type) && z.hp < hpBefore)
+          applyControl(z, "iceSlow", 10);
         if (s.type === "butter") applyControl(z, "otherFreeze", 3);
         if (s.type === "cactus" || s.type === "cattail") z.flying = false;
         if (["melon", "winter", "fire"].includes(s.type))

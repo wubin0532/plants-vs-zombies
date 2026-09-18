@@ -176,8 +176,63 @@ export function validateSave(data: unknown): Save {
       : [],
   };
 }
+
+/** 进度排序：只用于决定合并后的主档（进度是单调的，不会回退）。 */
+export function progressRank(s: Save): number {
+  return (s.completed?.length ?? 0) * 1000 + (s.unlocked ?? 0);
+}
+
+/**
+ * 云同步冲突合并：两端的进度取并集，永远不丢关卡进度。
+ * 两个合法存档的 completed 都是从 1 开始的连续区间，因此取更长的一个即可。
+ */
+export function mergeSave(a: Save, b: Save): Save {
+  const base = progressRank(a) >= progressRank(b) ? a : b;
+  const completed = base.completed;
+  const unlocked = Math.min(51, Math.max(base.unlocked, completed.length + 1));
+  const stars: Record<number, number> = {};
+  for (const level of new Set([
+    ...Object.keys(a.stars ?? {}),
+    ...Object.keys(b.stars ?? {}),
+  ])) {
+    const n = Number(level);
+    stars[n] = Math.max(a.stars?.[n] ?? 0, b.stars?.[n] ?? 0);
+  }
+  const items: Record<string, number> = { ...a.items };
+  for (const [id, n] of Object.entries(b.items ?? {}))
+    items[id] = Math.max(items[id] ?? 0, n);
+  const daily =
+    a.daily.date === b.daily.date
+      ? {
+          date: a.daily.date,
+          best: Math.min(
+            a.daily.best > 0 ? a.daily.best : Infinity,
+            b.daily.best > 0 ? b.daily.best : Infinity,
+          ),
+        }
+      : a.daily.date > b.daily.date
+        ? a.daily
+        : b.daily;
+  const merged: Save = {
+    ...base,
+    version: 2,
+    completed,
+    unlocked,
+    coins: Math.max(a.coins, b.coins),
+    kills: Math.max(a.kills, b.kills),
+    seedSlots: Math.max(a.seedSlots, b.seedSlots),
+    stars,
+    items,
+    achievements: [...new Set([...a.achievements, ...b.achievements])],
+    tutorialSeen: [...new Set([...a.tutorialSeen, ...b.tutorialSeen])].slice(0, 30),
+    scores: [...a.scores, ...b.scores].slice(-200),
+    daily: Number.isFinite(daily.best) ? daily : { date: daily.date, best: 0 },
+  };
+  return validateSave(merged);
+}
+
 const key = "pvz-garden-save-v1";
-const localAtKey = "pvz-garden-save-local-at";
+const syncedAtKey = "pvz-garden-save-synced-at";
 let pushTimer: number | undefined;
 let suppressPush = false;
 /** 基础卡槽数；6→10 全部由商店扩容承担，不再随章节免费增加。 */
@@ -199,7 +254,10 @@ export const useSave = defineStore("save", {
     data: initial(),
     warning: "",
     cloud: "idle" as CloudState,
+    /** 本机已见到的服务端修订号（乐观并发的 base），持久化以跨刷新保留。 */
     cloudAt: 0,
+    /** 是否已完成登录/恢复后的首次对账；未完成前禁止云推送。 */
+    reconciled: false,
   }),
   actions: {
     load() {
@@ -210,11 +268,16 @@ export const useSave = defineStore("save", {
         this.warning =
           "本地存档损坏，进度已重置。如有备份，可在设置中导入恢复。";
       }
+      try {
+        const synced = Number(localStorage.getItem(syncedAtKey) ?? 0) || 0;
+        this.cloudAt = Number.isFinite(synced) ? synced : 0;
+      } catch {
+        this.cloudAt = 0;
+      }
     },
     persist() {
       try {
         localStorage.setItem(key, JSON.stringify(this.data));
-        localStorage.setItem(localAtKey, String(Date.now()));
       } catch {
         this.warning = "浏览器未能保存进度，请导出存档备份。";
       }
@@ -222,6 +285,7 @@ export const useSave = defineStore("save", {
     },
     scheduleCloudPush() {
       if (!getActivePinia() || suppressPush) return;
+      if (!this.reconciled) return;
       const auth = useAuth(getActivePinia()!);
       if (!auth.loggedIn) return;
       if (typeof window === "undefined") return;
@@ -230,19 +294,24 @@ export const useSave = defineStore("save", {
         void this.pushCloud();
       }, 2000);
     },
-    async pushCloud() {
+    async pushCloud(force = false) {
       if (!getActivePinia()) return;
+      if (!force && !this.reconciled) return;
       const auth = useAuth(getActivePinia()!);
       if (!auth.loggedIn) return;
       clearTimeout(pushTimer);
       this.cloud = "syncing";
       try {
-        const { updatedAt } = await api.putSave(this.data);
+        const { updatedAt } = await api.putSave(this.data, this.cloudAt || 0);
         this.cloudAt = updatedAt;
+        localStorage.setItem(syncedAtKey, String(updatedAt));
         this.cloud = "synced";
       } catch (error) {
+        if (error instanceof ApiError && error.status === 409) {
+          await this.resolveConflict(error);
+          return;
+        }
         if (error instanceof ApiError && error.status === 401) {
-          auth.user = null;
           this.cloud = "idle";
           return;
         }
@@ -250,6 +319,37 @@ export const useSave = defineStore("save", {
         this.warning = "云端保存失败：" + (error as Error).message;
       }
     },
+    /** 服务端拒绝过期写入：合并两端进度后重新上传，绝不覆盖丢档。 */
+    async resolveConflict(error: ApiError) {
+      const conflict = (error.payload as { save?: { updatedAt: number; data: unknown } } | null)?.save;
+      if (!conflict) {
+        this.cloud = "error";
+        this.warning = "云端保存冲突，请稍后重试。";
+        return;
+      }
+      try {
+        const remote = validateSave(conflict.data);
+        const merged = mergeSave(this.data, remote);
+        suppressPush = true;
+        try {
+          this.data = merged;
+          localStorage.setItem(key, JSON.stringify(merged));
+        } finally {
+          suppressPush = false;
+        }
+        this.cloudAt = conflict.updatedAt;
+        localStorage.setItem(syncedAtKey, String(conflict.updatedAt));
+        const { updatedAt } = await api.putSave(this.data, conflict.updatedAt);
+        this.cloudAt = updatedAt;
+        localStorage.setItem(syncedAtKey, String(updatedAt));
+        this.cloud = "synced";
+        this.warning = "检测到其他设备的进度，已合并保存。";
+      } catch (mergeError) {
+        this.cloud = "error";
+        this.warning = "云端存档冲突处理失败：" + (mergeError as Error).message;
+      }
+    },
+    /** 显式"下载并覆盖本机"：用户主动选择以云端为准。 */
     async pullCloud() {
       if (!getActivePinia()) return false;
       const auth = useAuth(getActivePinia()!);
@@ -257,6 +357,7 @@ export const useSave = defineStore("save", {
       this.cloud = "syncing";
       try {
         const { save: cloudSave } = await api.getSave();
+        this.reconciled = true;
         if (!cloudSave) {
           this.cloud = "synced";
           return false;
@@ -265,12 +366,13 @@ export const useSave = defineStore("save", {
         try {
           this.data = validateSave(cloudSave.data);
           localStorage.setItem(key, JSON.stringify(this.data));
-          localStorage.setItem(localAtKey, String(Date.now()));
           this.cloudAt = cloudSave.updatedAt;
+          localStorage.setItem(syncedAtKey, String(cloudSave.updatedAt));
         } finally {
           suppressPush = false;
         }
         this.cloud = "synced";
+        this.warning = "已用云端存档覆盖本机进度。";
         return true;
       } catch (error) {
         suppressPush = false;
@@ -279,34 +381,49 @@ export const useSave = defineStore("save", {
         return false;
       }
     },
-    async syncOnLogin() {
+    /**
+     * 登录 / 会话恢复后的对账入口：先取云端，合并两端进度，再上传合并结果。
+     * 使用服务端修订号而非客户端时钟；在完成前 pushCloud 被 reconciled 拦截。
+     */
+    async reconcile() {
       if (!getActivePinia()) return;
       const auth = useAuth(getActivePinia()!);
-      if (!auth.loggedIn) return;
+      if (!auth.loggedIn) {
+        this.reconciled = true;
+        return;
+      }
       this.cloud = "syncing";
       try {
         const { save: cloudSave } = await api.getSave();
-        const localAt = Number(localStorage.getItem(localAtKey) ?? 0) || 0;
         if (!cloudSave) {
-          await this.pushCloud();
+          this.reconciled = true;
+          await this.pushCloud(true);
           return;
         }
-        if (cloudSave.updatedAt > localAt) {
-          suppressPush = true;
-          try {
-            this.data = validateSave(cloudSave.data);
-            localStorage.setItem(key, JSON.stringify(this.data));
-            localStorage.setItem(localAtKey, String(Date.now()));
-            this.cloudAt = cloudSave.updatedAt;
-          } finally {
-            suppressPush = false;
-          }
-          this.cloud = "synced";
-        } else {
-          await this.pushCloud();
+        let remote: Save;
+        try {
+          remote = validateSave(cloudSave.data);
+        } catch {
+          this.reconciled = true;
+          this.warning = "云端存档无法读取，已用本机进度覆盖。";
+          await this.pushCloud(true);
+          return;
         }
+        const merged = mergeSave(this.data, remote);
+        suppressPush = true;
+        try {
+          this.data = merged;
+          localStorage.setItem(key, JSON.stringify(merged));
+        } finally {
+          suppressPush = false;
+        }
+        this.cloudAt = cloudSave.updatedAt;
+        localStorage.setItem(syncedAtKey, String(cloudSave.updatedAt));
+        this.reconciled = true;
+        await this.pushCloud(true);
       } catch (error) {
         suppressPush = false;
+        this.reconciled = true;
         this.cloud = "error";
         this.warning = "云端同步失败：" + (error as Error).message;
       }
@@ -366,7 +483,13 @@ export const useSave = defineStore("save", {
       return true;
     },
     importSave(raw: string) {
-      this.data = validateSave(JSON.parse(raw));
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        throw Error("存档文件不是合法 JSON");
+      }
+      this.data = validateSave(parsed);
       this.persist();
       this.warning = "存档已导入。";
     },
