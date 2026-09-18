@@ -3411,7 +3411,9 @@ body.battle-fullscreen {
   height: 54px;
   padding: 2px;
   line-height: 1;
-  gap: 1px;
+  /* 网格 gap 会额外占高（29+10+11+2×gap+2×padding 必须 ≤ height），
+     否则底部价格会被 overflow:hidden 裁掉。这里不设 gap，靠行内居中留白。 */
+  gap: 0;
 }
 .immersive .battle-seed img { width: 34px; height: 29px; object-fit: contain; }
 .immersive .battle-seed > span:not(.key),
@@ -3556,7 +3558,7 @@ body.battle-fullscreen {
     flex: 0 0 calc(var(--u) * 54);
     height: calc(var(--u) * 54);
     padding: calc(var(--u) * 2);
-    gap: calc(var(--u) * 1);
+    gap: 0;
     border-width: calc(var(--u) * 2);
     border-radius: calc(var(--u) * 5);
   }
