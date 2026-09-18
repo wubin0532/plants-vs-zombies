@@ -1,8 +1,9 @@
 /** Presentation-only adapters. Nothing here changes combat state or random numbers. */
 import type { Plant, Shot, Zombie } from './engine';
+import { assetUrl } from './art';
 export const presentationAssets = ['pea','icepea','spore','needle','homing','cabbage','kernel','butter','melon','winter','star','fire','cob','basketball','snowball','sun','coin','shield','magnet','crack','iceblock','sleep','splash','dust','impact','bloom','wind','ring'] as const;
 export type Illustration = typeof presentationAssets[number];
-export const presentationImage = (id: Illustration) => `${import.meta.env.BASE_URL}assets/presentation/${id}.webp`;
+export const presentationImage = (id: Illustration) => assetUrl(`assets/presentation/${id}.webp`);
 export type ProjectileVisual = { image: Illustration; width: number; height: number; trail: number; lob: boolean; spin: boolean };
 const projectiles: Record<string, Partial<ProjectileVisual> & { image: Illustration }> = {
  pea:{image:'pea'}, repeater:{image:'pea'}, three:{image:'pea'}, split:{image:'pea'}, gatling:{image:'pea'},

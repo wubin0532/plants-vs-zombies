@@ -3,7 +3,7 @@ import { foggedAt, lanternsIn, torchesIn } from "./visibility";
 import { presentationAssets, presentationImage, projectileVisual, projectileHidden, plantAccent, plantBodyPose, plantIdlePose, zombieAccent, zombieVisualPose } from "./presentation";
 import Phaser from "phaser";
 import { plants, plantById, type Level } from "./content";
-import { plantImage, zombieImage, gardenImage, effectImage, bowlImage, mistImage, mowerImage, terrainImage, waterImage, tokenImage } from "./art";
+import { assetUrl, plantImage, zombieImage, gardenImage, effectImage, bowlImage, mistImage, mowerImage, terrainImage, waterImage, tokenImage } from "./art";
 import { BOARD, cellX, cellY, feetY, cellAt, healthFraction } from "./layout";
 import {
   bakeZombie,
@@ -205,7 +205,7 @@ export class GardenScene extends Phaser.Scene {
       if (hasZombieSheet(id))
         this.load.spritesheet(
           `walk-${id}`,
-          `${import.meta.env.BASE_URL}assets/animation/${id}.webp`,
+          assetUrl(`assets/animation/${id}.webp`),
           motionSheet(id),
         );
     // 立绘只保留程序化烘焙、护甲贴图和僵王直绘需要的少数几张。
@@ -220,13 +220,13 @@ export class GardenScene extends Phaser.Scene {
       if (id === "chomper")
         this.load.spritesheet(
           "chomper-motion",
-          `${import.meta.env.BASE_URL}assets/animation/chomper.webp`,
+          assetUrl("assets/animation/chomper.webp"),
           { frameWidth: 256, frameHeight: 256 },
         );
       else if (isMotionPlant(id))
         this.load.spritesheet(
           `plantanim-${id}`,
-          `${import.meta.env.BASE_URL}assets/animation/${id}.webp`,
+          assetUrl(`assets/animation/${id}.webp`),
           { frameWidth: 256, frameHeight: 256 },
         );
       // 拖拽预览、滚球与无动作图的植物读取同名立绘，故每株必载植物都保留它。
