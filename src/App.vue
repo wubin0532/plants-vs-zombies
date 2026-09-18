@@ -1712,7 +1712,7 @@ onBeforeUnmount(() => {
                 <span class="kicker">LOAD FAILED</span>
                 <h2>庭院没能搭起来。</h2>
                 <p>{{ bootError }}</p>
-                <button class="primary" @click="start">重新加载 →</button
+                <button class="primary solo" @click="start">重新加载 →</button
                 ><button class="text-button" @click="home">返回庭院</button>
               </div>
             </div>
@@ -1727,7 +1727,7 @@ onBeforeUnmount(() => {
               <div class="pause-card lesson-card">
                 <span class="kicker">庭院新发现</span><h2>{{ lesson.title }}</h2>
                 <p>{{ lesson.text }}</p>
-                <button class="primary" @click="closeLesson">开始体验</button>
+                <button class="primary solo" @click="closeLesson">开始体验</button>
                 <button class="text-button" @click="closeLesson">跳过提示</button>
               </div>
             </div>
@@ -1798,7 +1798,7 @@ onBeforeUnmount(() => {
                   }}
                 </p>
                 <p v-if="dailyMode && daily.mods.length" class="daily-mods">
-                  今日条件：{{ daily.mods.map((m) => m.name).join("、") }}
+                  今日条件：<span v-for="m in daily.mods" :key="m.name">{{ m.name }}</span>
                 </p>
                 <p v-if="result === 'won' && resultStars" class="result-stars">
                   {{ "★".repeat(resultStars) }}{{ "☆".repeat(3 - resultStars) }}
@@ -1852,7 +1852,7 @@ onBeforeUnmount(() => {
                   本局收集金币 +{{ engine.coins }}
                 </p>
                 <button
-                  class="primary"
+                  class="primary solo"
                   @click="
                     result === 'won' &&
                     !dailyMode &&
@@ -1870,9 +1870,9 @@ onBeforeUnmount(() => {
                       ? "前往下一关 →"
                       : "重新挑战 →"
                   }}</button
-                ><button v-if="dailyMode" class="text-button" @click="rerollDaily">
+                ><button v-if="dailyMode" class="text-button solo" @click="rerollDaily">
                   换一局</button
-                ><button class="text-button" @click="home">返回庭院</button>
+                ><button class="text-button solo" @click="home">返回庭院</button>
               </div>
             </div>
           </div>
