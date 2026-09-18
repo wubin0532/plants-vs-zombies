@@ -48,12 +48,6 @@ import { useAuth } from "./auth";
 const save = useSave();
 const auth = useAuth();
 save.load();
-// 会话恢复（Cookie 仍有效）时也必须先对账再允许云推送，否则旧本机档会覆盖云端新档。
-void (async () => {
-  await auth.refresh();
-  if (auth.loggedIn) await save.reconcile();
-  else save.reconciled = true;
-})();
 {
   const fresh = checkAchievements(save.data);
   if (fresh.length) {
@@ -84,6 +78,24 @@ const chosen = ref<string[]>([]),
   imitate = ref("pea"),
   booting = ref(false),
   bootError = ref("");
+// 设置弹窗按功能分页：音频 / 画面 / 账号与存档；分通道音量属于"不常用"，默认折叠。
+const settingsTab = ref<"audio" | "display" | "save">("audio");
+const settingsAdvanced = ref(false);
+const settingsTabs = [
+  { id: "audio", label: "音频" },
+  { id: "display", label: "画面" },
+  { id: "save", label: "账号与存档" },
+] as const;
+// 会话恢复（Cookie 仍有效）时也必须先进入该账号的本机档并对账，否则旧本机档会覆盖云端新档。
+void (async () => {
+  await auth.refresh();
+  if (auth.loggedIn && auth.user) {
+    const result = await save.enterProfile(auth.user.id);
+    if (result === "claim") modal.value = "claim";
+  } else {
+    save.reconciled = true;
+  }
+})();
 // 移动端方向与全屏：手机竖屏改用旋转引导，横屏让战场吃满可视高度。
 const viewport = ref({ w: window.innerWidth, h: window.innerHeight });
 const allowPortraitPlay = ref(false);
@@ -787,7 +799,11 @@ async function submitAuth() {
   if (!ok) return;
   authPassword.value = "";
   modal.value = "";
-  await save.reconcile();
+  const userId = auth.user?.id;
+  if (userId) {
+    const result = await save.enterProfile(userId);
+    if (result === "claim") modal.value = "claim";
+  }
   audio.enabled = save.data.sound;
   audio.volume = save.data.volume;
   audio.mix = { ...save.data.mix };
@@ -795,7 +811,13 @@ async function submitAuth() {
 }
 async function signOut() {
   await auth.logout();
-  save.warning = "已退出登录，进度仍保存在本机。";
+  save.exitProfile();
+  save.warning = "已退出登录，账号进度保存在云端；本机已切回访客档。";
+}
+/** 带入确认框的两个出口；关闭弹窗本身按"不带入"处理（见 watch(modal)）。 */
+function resolveClaim(carry: boolean) {
+  void save.resolveClaim(carry);
+  modal.value = "";
 }
 async function uploadSave() {
   await save.pushCloud(true);
@@ -948,6 +970,8 @@ watchEffect(() => {
 let modalTrigger: HTMLElement | null = null;
 watch(modal, (value, previous) => {
   if (!value) closeDemo();
+  // 关闭带入确认框（× / Esc / 点遮罩）一律视为"不带入"，避免把访客档塞进新账号。
+  if (!value && save.claim) void save.resolveClaim(false);
   if (value && !previous) {
     modalTrigger =
       document.activeElement instanceof HTMLElement
@@ -2094,135 +2118,163 @@ onBeforeUnmount(() => {
         <template v-if="modal === 'settings'"
           ><p class="kicker">MAKE YOURSELF AT HOME</p>
           <h2>庭院设置</h2>
-          <div class="setting-row">
-            <span>游戏音效<small>攻击、啃食、低吼、爆炸与场景反馈</small></span
-            ><button class="plain" @click="sound">
-              {{ save.data.sound ? "已开启" : "已关闭" }}
+          <div class="world-tabs settings-tabs">
+            <button
+              v-for="t in settingsTabs"
+              :key="t.id"
+              :class="{ active: settingsTab === t.id }"
+              @click="settingsTab = t.id"
+            >
+              {{ t.label }}
             </button>
           </div>
-          <div class="setting-row">
-            <span>音量</span
-            ><input
-              aria-label="音量"
-              type="range"
-              min="0"
-              max="1"
-              step=".05"
-              v-model.number="save.data.volume"
-              @input="updateSettings"
-            /><button class="plain" @click="sampleSound">试听</button>
-          </div>
-          <div
-            class="setting-row"
-            v-for="(label, channel) in {
-              battle: '战斗音效',
-              music: '背景音乐',
-              environment: '环境声音',
-              ui: '界面提示',
-            }"
-            :key="channel"
-          >
-            <span>{{ label }}</span
-            ><input
-              type="range"
-              min="0"
-              max="1"
-              step="0.05"
-              :aria-label="label"
-              v-model.number="save.data.mix[channel]"
-              @input="updateSettings"
-            /><button class="plain" @click="sampleChannel(channel)">
-              试听
-            </button>
-          </div>
-          <div class="setting-row">
-            <span>特效质量</span
-            ><select
-              aria-label="特效质量"
-              v-model="save.data.quality"
-              @change="updateSettings"
-            >
-              <option value="low">低</option>
-              <option value="medium">中</option>
-              <option value="high">高</option>
-            </select>
-          </div>
-          <div class="setting-row">
-            <span>爆炸震动</span
-            ><input
-              aria-label="爆炸震动"
-              type="checkbox"
-              v-model="save.data.shake"
-              @change="updateSettings"
-            />
-          </div>
-          <div class="setting-row">
-            <span
-              >高对比度<small>加深边框与文字，减速僵尸用更深的蓝色</small></span
-            ><button
-              class="plain"
-              @click="
-                save.data.contrast = !save.data.contrast;
-                save.persist();
-              "
-            >
-              {{ save.data.contrast ? "已开启" : "已关闭" }}
-            </button>
-          </div>
-          <div class="setting-row">
-            <span>界面字号<small>不影响游戏画面本身</small></span
-            ><select
-              aria-label="界面字号"
-              v-model="save.data.fontSize"
-              @change="save.persist()"
-            >
-              <option value="small">小</option>
-              <option value="standard">标准</option>
-              <option value="large">大</option>
-            </select>
-          </div>
-          <div class="setting-row">
-            <span
-              >用户账号<small v-if="!auth.loggedIn"
-                >登录后可在不同设备同步进度</small
-              ><small v-else>已登录：{{ userName }} · {{ cloudLabel }}</small></span
-            ><button
-              v-if="!auth.loggedIn"
-              class="plain"
-              @click="openAccount('login')"
-            >
-              登录 / 注册</button
-            ><button v-else class="plain" @click="signOut">退出登录</button>
-          </div>
-          <div v-if="auth.loggedIn" class="setting-row">
-            <span>云端同步<small>“上传本机”会覆盖云端，“下载云端”会覆盖本机</small></span
-            ><span class="save-buttons"
-              ><button class="plain" @click="uploadSave">上传本机</button
-              ><button class="plain" @click="downloadSave">下载云端</button></span
-            >
-          </div>
-          <div class="setting-row">
-            <span
-              >冒险存档<small
-                >已完成 {{ save.data.completed.length }} / 50 关</small
-              ></span
-            ><span class="pill">{{
-              auth.loggedIn ? "已接入账号" : "保存在本机"
-            }}</span>
-          </div>
-          <p class="hint">
-            进度保存在当前浏览器中。清除网站数据或更换设备前，请先导出备份。进行中的战局不会保存。
-          </p>
-          <div class="save-buttons">
-            <button class="primary" @click="exportSave">导出存档</button
-            ><button class="plain" @click="file?.click()">导入存档</button
-            ><input
-              ref="file"
-              type="file"
-              accept=".json,application/json"
-              hidden
-              @change="importSave"
-            />
+          <div class="settings-pane">
+            <template v-if="settingsTab === 'audio'">
+              <div class="setting-row">
+                <span>游戏音效<small>攻击、啃食、低吼、爆炸与场景反馈</small></span
+                ><button class="plain" @click="sound">
+                  {{ save.data.sound ? "已开启" : "已关闭" }}
+                </button>
+              </div>
+              <div class="setting-row">
+                <span>音量</span
+                ><input
+                  aria-label="音量"
+                  type="range"
+                  min="0"
+                  max="1"
+                  step=".05"
+                  v-model.number="save.data.volume"
+                  @input="updateSettings"
+                /><button class="plain" @click="sampleSound">试听</button>
+              </div>
+              <button
+                class="settings-more"
+                :aria-expanded="settingsAdvanced"
+                @click="settingsAdvanced = !settingsAdvanced"
+              >
+                <span>分通道音量<small>战斗 / 音乐 / 环境 / 界面单独调节</small></span
+                ><b>{{ settingsAdvanced ? "收起" : "展开" }}</b>
+              </button>
+              <div v-if="settingsAdvanced" class="settings-sub">
+                <div
+                  class="setting-row"
+                  v-for="(label, channel) in {
+                    battle: '战斗音效',
+                    music: '背景音乐',
+                    environment: '环境声音',
+                    ui: '界面提示',
+                  }"
+                  :key="channel"
+                >
+                  <span>{{ label }}</span
+                  ><input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    :aria-label="label"
+                    v-model.number="save.data.mix[channel]"
+                    @input="updateSettings"
+                  /><button class="plain" @click="sampleChannel(channel)">
+                    试听
+                  </button>
+                </div>
+              </div>
+            </template>
+            <template v-else-if="settingsTab === 'display'">
+              <div class="setting-row">
+                <span>特效质量</span
+                ><select
+                  aria-label="特效质量"
+                  v-model="save.data.quality"
+                  @change="updateSettings"
+                >
+                  <option value="low">低</option>
+                  <option value="medium">中</option>
+                  <option value="high">高</option>
+                </select>
+              </div>
+              <div class="setting-row">
+                <span>爆炸震动</span
+                ><input
+                  aria-label="爆炸震动"
+                  type="checkbox"
+                  v-model="save.data.shake"
+                  @change="updateSettings"
+                />
+              </div>
+              <div class="setting-row">
+                <span
+                  >高对比度<small>加深边框与文字，减速僵尸用更深的蓝色</small></span
+                ><button
+                  class="plain"
+                  @click="
+                    save.data.contrast = !save.data.contrast;
+                    save.persist();
+                  "
+                >
+                  {{ save.data.contrast ? "已开启" : "已关闭" }}
+                </button>
+              </div>
+              <div class="setting-row">
+                <span>界面字号<small>不影响游戏画面本身</small></span
+                ><select
+                  aria-label="界面字号"
+                  v-model="save.data.fontSize"
+                  @change="save.persist()"
+                >
+                  <option value="small">小</option>
+                  <option value="standard">标准</option>
+                  <option value="large">大</option>
+                </select>
+              </div>
+            </template>
+            <template v-else>
+              <div class="setting-row">
+                <span
+                  >用户账号<small v-if="!auth.loggedIn"
+                    >登录后可在不同设备同步进度</small
+                  ><small v-else>已登录：{{ userName }} · {{ cloudLabel }}</small></span
+                ><button
+                  v-if="!auth.loggedIn"
+                  class="plain"
+                  @click="openAccount('login')"
+                >
+                  登录 / 注册</button
+                ><button v-else class="plain" @click="signOut">退出登录</button>
+              </div>
+              <div v-if="auth.loggedIn" class="setting-row">
+                <span>云端同步<small>“上传本机”会覆盖云端，“下载云端”会覆盖本机</small></span
+                ><span class="save-buttons"
+                  ><button class="plain" @click="uploadSave">上传本机</button
+                  ><button class="plain" @click="downloadSave">下载云端</button></span
+                >
+              </div>
+              <div class="setting-row">
+                <span
+                  >冒险存档<small
+                    >已完成 {{ save.data.completed.length }} / 50 关</small
+                  ></span
+                ><span class="pill">{{
+                  auth.loggedIn ? "已接入账号" : "保存在本机"
+                }}</span>
+              </div>
+              <p class="hint">
+                进度保存在当前浏览器中。清除网站数据或更换设备前，请先导出备份。进行中的战局不会保存。
+              </p>
+              <div class="save-buttons">
+                <button class="primary" @click="exportSave">导出存档</button
+                ><button class="plain" @click="file?.click()">导入存档</button
+                ><input
+                  ref="file"
+                  type="file"
+                  accept=".json,application/json"
+                  hidden
+                  @change="importSave"
+                />
+              </div>
+            </template>
           </div>
           <p v-if="save.warning" role="status" class="notice">
             {{ save.warning }}
@@ -2292,8 +2344,24 @@ onBeforeUnmount(() => {
             </div>
           </form>
           <p class="hint">
-            登录后进度保存到账号，可在不同设备继续游戏。退出登录不会删除本机存档。
+            登录后进度保存到账号，可在不同设备继续游戏；退出登录不会删除该账号的进度。
           </p></template
+        >
+        <template v-if="modal === 'claim'"
+          ><p class="kicker">LOCAL PROGRESS</p>
+          <h2>要带上这台手机的本机进度吗？</h2>
+          <p class="hint">
+            这台手机上有一份未登录时的访客进度（已通关
+            {{ save.claim?.guest.completed.length ?? 0 }}
+            关）。为避免把别人的进度带进新账号，默认不带入；确认是你自己玩过，再选择带入。
+          </p>
+          <div class="save-buttons">
+            <button class="primary" @click="resolveClaim(false)">
+              从新账号开始</button
+            ><button class="plain" @click="resolveClaim(true)">
+              带入本机进度
+            </button>
+          </div></template
         >
       </section>
     </div>

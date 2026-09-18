@@ -6,6 +6,14 @@ import {
 import { defineStore, getActivePinia } from "pinia";
 import { useAuth } from "./auth";
 import { ApiError, api } from "./api";
+import {
+  GUEST_PROFILE,
+  LEGACY_SAVE_KEY,
+  LEGACY_SYNCED_KEY,
+  saveKeyFor,
+  syncedAtKeyFor,
+  writeActiveProfile,
+} from "./save-keys";
 export type Save = {
   version: 2;
   tutorialSeen: string[];
@@ -231,10 +239,49 @@ export function mergeSave(a: Save, b: Save): Save {
   return validateSave(merged);
 }
 
-const key = "pvz-garden-save-v1";
-const syncedAtKey = "pvz-garden-save-synced-at";
 let pushTimer: number | undefined;
 let suppressPush = false;
+
+/** 判断一份存档是否含有值得"带入账号"的真实进度（空档不算）。 */
+export function hasProgress(save: Save): boolean {
+  return (
+    save.completed.length > 0 ||
+    save.unlocked > 1 ||
+    save.coins > 0 ||
+    save.seedSlots > 0 ||
+    save.kills > 0 ||
+    save.achievements.length > 0 ||
+    Object.keys(save.stars).length > 0 ||
+    Object.keys(save.items).length > 0 ||
+    save.scores.length > 0
+  );
+}
+
+/** 只读取某归属的本机档（校验通过才返回），不改变当前 store 状态。 */
+function readProfile(profile: string): Save | null {
+  try {
+    if (typeof localStorage === "undefined") return null;
+    const raw = localStorage.getItem(saveKeyFor(profile));
+    if (!raw) return null;
+    return validateSave(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+/** 首次加载访客档时，把旧版全局存档迁移为访客档；旧 key 保留作兜底。 */
+function migrateLegacyToGuest() {
+  try {
+    if (localStorage.getItem(saveKeyFor(GUEST_PROFILE))) return;
+    const legacy = localStorage.getItem(LEGACY_SAVE_KEY);
+    if (legacy) localStorage.setItem(saveKeyFor(GUEST_PROFILE), legacy);
+    const legacySynced = localStorage.getItem(LEGACY_SYNCED_KEY);
+    if (legacySynced)
+      localStorage.setItem(syncedAtKeyFor(GUEST_PROFILE), legacySynced);
+  } catch {
+    /* 迁移失败不阻塞启动 */
+  }
+}
 /** 基础卡槽数；6→10 全部由商店扩容承担，不再随章节免费增加。 */
 export const BASE_SEED_SLOTS = 6;
 export const MAX_SEED_SLOTS = 10;
@@ -258,26 +305,45 @@ export const useSave = defineStore("save", {
     cloudAt: 0,
     /** 是否已完成登录/恢复后的首次对账；未完成前禁止云推送。 */
     reconciled: false,
+    /**
+     * 当前本机档归属：guest 或登录用户 id。
+     * 本机存档按此分槽；任何云推送都要求 profile === auth.user.id，杜绝串档。
+     */
+    profile: GUEST_PROFILE,
+    /** 新账号云端为空、且访客档有进度时，等待用户选择是否带入。 */
+    claim: null as { guest: Save } | null,
   }),
   actions: {
-    load() {
+    /** 载入指定归属的本机档；不存在则空档起步，绝不沿用上一个账号的内存数据。 */
+    load(profile: string = GUEST_PROFILE) {
+      this.profile = profile;
+      writeActiveProfile(profile);
+      this.claim = null;
+      if (typeof localStorage === "undefined") {
+        this.reconciled = false;
+        return;
+      }
+      if (profile === GUEST_PROFILE) migrateLegacyToGuest();
       try {
-        const raw = localStorage.getItem(key);
+        const raw = localStorage.getItem(saveKeyFor(profile));
         if (raw) this.data = validateSave(JSON.parse(raw));
+        else this.data = initial();
       } catch {
         this.warning =
           "本地存档损坏，进度已重置。如有备份，可在设置中导入恢复。";
       }
       try {
-        const synced = Number(localStorage.getItem(syncedAtKey) ?? 0) || 0;
+        const synced =
+          Number(localStorage.getItem(syncedAtKeyFor(profile)) ?? 0) || 0;
         this.cloudAt = Number.isFinite(synced) ? synced : 0;
       } catch {
         this.cloudAt = 0;
       }
+      this.reconciled = false;
     },
     persist() {
       try {
-        localStorage.setItem(key, JSON.stringify(this.data));
+        localStorage.setItem(saveKeyFor(this.profile), JSON.stringify(this.data));
       } catch {
         this.warning = "浏览器未能保存进度，请导出存档备份。";
       }
@@ -287,7 +353,8 @@ export const useSave = defineStore("save", {
       if (!getActivePinia() || suppressPush) return;
       if (!this.reconciled) return;
       const auth = useAuth(getActivePinia()!);
-      if (!auth.loggedIn) return;
+      // 只允许把当前账号自己的档推到自己名下，杜绝切号后串档。
+      if (!auth.loggedIn || auth.user?.id !== this.profile) return;
       if (typeof window === "undefined") return;
       clearTimeout(pushTimer);
       pushTimer = window.setTimeout(() => {
@@ -298,15 +365,20 @@ export const useSave = defineStore("save", {
       if (!getActivePinia()) return;
       if (!force && !this.reconciled) return;
       const auth = useAuth(getActivePinia()!);
-      if (!auth.loggedIn) return;
+      if (!auth.loggedIn || auth.user?.id !== this.profile) return;
+      const profile = this.profile;
+      const payload = this.data;
       clearTimeout(pushTimer);
       this.cloud = "syncing";
       try {
-        const { updatedAt } = await api.putSave(this.data, this.cloudAt || 0);
+        const { updatedAt } = await api.putSave(payload, this.cloudAt || 0);
+        // 请求期间切换了账号则丢弃结果，避免把 A 的修订号/状态写到 B。
+        if (this.profile !== profile || auth.user?.id !== profile) return;
         this.cloudAt = updatedAt;
-        localStorage.setItem(syncedAtKey, String(updatedAt));
+        localStorage.setItem(syncedAtKeyFor(profile), String(updatedAt));
         this.cloud = "synced";
       } catch (error) {
+        if (this.profile !== profile) return;
         if (error instanceof ApiError && error.status === 409) {
           await this.resolveConflict(error);
           return;
@@ -321,6 +393,7 @@ export const useSave = defineStore("save", {
     },
     /** 服务端拒绝过期写入：合并两端进度后重新上传，绝不覆盖丢档。 */
     async resolveConflict(error: ApiError) {
+      const profile = this.profile;
       const conflict = (error.payload as { save?: { updatedAt: number; data: unknown } } | null)?.save;
       if (!conflict) {
         this.cloud = "error";
@@ -333,15 +406,19 @@ export const useSave = defineStore("save", {
         suppressPush = true;
         try {
           this.data = merged;
-          localStorage.setItem(key, JSON.stringify(merged));
+          localStorage.setItem(saveKeyFor(profile), JSON.stringify(merged));
         } finally {
           suppressPush = false;
         }
         this.cloudAt = conflict.updatedAt;
-        localStorage.setItem(syncedAtKey, String(conflict.updatedAt));
-        const { updatedAt } = await api.putSave(this.data, conflict.updatedAt);
+        localStorage.setItem(
+          syncedAtKeyFor(profile),
+          String(conflict.updatedAt),
+        );
+        const { updatedAt } = await api.putSave(merged, conflict.updatedAt);
+        if (this.profile !== profile) return;
         this.cloudAt = updatedAt;
-        localStorage.setItem(syncedAtKey, String(updatedAt));
+        localStorage.setItem(syncedAtKeyFor(profile), String(updatedAt));
         this.cloud = "synced";
         this.warning = "检测到其他设备的进度，已合并保存。";
       } catch (mergeError) {
@@ -353,10 +430,12 @@ export const useSave = defineStore("save", {
     async pullCloud() {
       if (!getActivePinia()) return false;
       const auth = useAuth(getActivePinia()!);
-      if (!auth.loggedIn) return false;
+      if (!auth.loggedIn || auth.user?.id !== this.profile) return false;
+      const profile = this.profile;
       this.cloud = "syncing";
       try {
         const { save: cloudSave } = await api.getSave();
+        if (this.profile !== profile) return false;
         this.reconciled = true;
         if (!cloudSave) {
           this.cloud = "synced";
@@ -365,9 +444,12 @@ export const useSave = defineStore("save", {
         suppressPush = true;
         try {
           this.data = validateSave(cloudSave.data);
-          localStorage.setItem(key, JSON.stringify(this.data));
+          localStorage.setItem(saveKeyFor(profile), JSON.stringify(this.data));
           this.cloudAt = cloudSave.updatedAt;
-          localStorage.setItem(syncedAtKey, String(cloudSave.updatedAt));
+          localStorage.setItem(
+            syncedAtKeyFor(profile),
+            String(cloudSave.updatedAt),
+          );
         } finally {
           suppressPush = false;
         }
@@ -382,23 +464,35 @@ export const useSave = defineStore("save", {
       }
     },
     /**
-     * 登录 / 会话恢复后的对账入口：先取云端，合并两端进度，再上传合并结果。
-     * 使用服务端修订号而非客户端时钟；在完成前 pushCloud 被 reconciled 拦截。
+     * 进入某个账号的本机档并对账：
+     * - 只读写该账号自己的本机槽，绝不沿用上一个账号 / 访客的内存档；
+     * - 云端已有档 → 本账号本机档 ∪ 云档（同一账号多设备仍然合并，不回退）；
+     * - 云端为空且账号本机档也为空、但访客档有进度 → 返回 "claim" 询问是否带入（默认不带入）；
+     * - 其余情况用账号自己的档初始化云端。
+     * 返回 "claim" 时调用方应打开带入确认框。
      */
-    async reconcile() {
-      if (!getActivePinia()) return;
+    async enterProfile(profile: string): Promise<"ok" | "claim"> {
+      if (!getActivePinia()) return "ok";
       const auth = useAuth(getActivePinia()!);
-      if (!auth.loggedIn) {
-        this.reconciled = true;
-        return;
-      }
+      if (!auth.loggedIn || auth.user?.id !== profile) return "ok";
+      clearTimeout(pushTimer);
+      this.load(profile);
       this.cloud = "syncing";
       try {
         const { save: cloudSave } = await api.getSave();
+        if (this.profile !== profile || auth.user?.id !== profile) return "ok";
         if (!cloudSave) {
+          // 新账号：默认不带入本机访客进度，先问一次。
+          const guest = readProfile(GUEST_PROFILE);
+          if (!hasProgress(this.data) && guest && hasProgress(guest)) {
+            this.reconciled = true;
+            this.cloud = "idle";
+            this.claim = { guest: guest };
+            return "claim";
+          }
           this.reconciled = true;
           await this.pushCloud(true);
-          return;
+          return "ok";
         }
         let remote: Save;
         try {
@@ -407,26 +501,57 @@ export const useSave = defineStore("save", {
           this.reconciled = true;
           this.warning = "云端存档无法读取，已用本机进度覆盖。";
           await this.pushCloud(true);
-          return;
+          return "ok";
         }
         const merged = mergeSave(this.data, remote);
         suppressPush = true;
         try {
           this.data = merged;
-          localStorage.setItem(key, JSON.stringify(merged));
+          localStorage.setItem(saveKeyFor(profile), JSON.stringify(merged));
         } finally {
           suppressPush = false;
         }
         this.cloudAt = cloudSave.updatedAt;
-        localStorage.setItem(syncedAtKey, String(cloudSave.updatedAt));
+        localStorage.setItem(syncedAtKeyFor(profile), String(cloudSave.updatedAt));
         this.reconciled = true;
         await this.pushCloud(true);
+        return "ok";
       } catch (error) {
         suppressPush = false;
         this.reconciled = true;
         this.cloud = "error";
         this.warning = "云端同步失败：" + (error as Error).message;
+        return "ok";
       }
+    },
+    /** 用户对"是否带入本机访客进度"的选择；默认不带入。 */
+    async resolveClaim(carry: boolean) {
+      const pending = this.claim;
+      this.claim = null;
+      if (!getActivePinia()) return;
+      const auth = useAuth(getActivePinia()!);
+      if (!auth.loggedIn || auth.user?.id !== this.profile) return;
+      if (carry && pending) {
+        const merged = mergeSave(this.data, pending.guest);
+        suppressPush = true;
+        try {
+          this.data = merged;
+          localStorage.setItem(saveKeyFor(this.profile), JSON.stringify(merged));
+        } finally {
+          suppressPush = false;
+        }
+        this.warning = "已把本机访客进度带入账号。";
+      } else {
+        this.warning = "已从新账号开始，本机访客进度仍保留。";
+      }
+      await this.pushCloud(true);
+    },
+    /** 退出登录：切回访客档，账号档只留在自己的槽与云端，不残留在当前槽。 */
+    exitProfile() {
+      clearTimeout(pushTimer);
+      this.cloud = "idle";
+      this.load(GUEST_PROFILE);
+      this.reconciled = true;
     },
     win(level: number, coins: number) {
       if (!this.data.completed.includes(level)) this.data.completed.push(level);

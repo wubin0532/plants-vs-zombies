@@ -1,12 +1,14 @@
+import { activeSaveKey, readActiveProfile } from "../save-keys";
+
 /**
- * 通关重玩判定：读取本地存档（store.ts 的 persist key）里的 completed 列表。
+ * 通关重玩判定：读取"当前归属"（访客 / 登录账号）本机存档里的 completed 列表。
  * 只允许在 UI 层（App.vue）调用；规则引擎本身不读任何持久化状态，
  * 以保证同一 (seed, replay, replayAttempt) 必定得到同一战场。
  */
 export function levelCleared(id: number): boolean {
   try {
     if (typeof localStorage === "undefined") return false;
-    const raw = localStorage.getItem("pvz-garden-save-v1");
+    const raw = localStorage.getItem(activeSaveKey());
     if (!raw) return false;
     const data = JSON.parse(raw) as { completed?: unknown };
     return Array.isArray(data.completed) && data.completed.includes(id);
@@ -22,7 +24,7 @@ export function levelCleared(id: number): boolean {
 export function nextReplayAttempt(levelId: number): number {
   try {
     if (typeof localStorage === "undefined") return 0;
-    const key = "pvz-yeti-attempt-" + levelId;
+    const key = "pvz-yeti-attempt-" + readActiveProfile() + "-" + levelId;
     const n = Number(localStorage.getItem(key) ?? 0) || 0;
     localStorage.setItem(key, String(n + 1));
     return n;

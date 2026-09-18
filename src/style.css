@@ -1907,6 +1907,56 @@ body.font-large .in-game .modal {
   color: #626c49;
   margin-top: 8px;
 }
+/* 设置分页：按功能分区，长列表不再一屏到底；不常用项折叠。 */
+.settings-tabs {
+  margin: 18px 0 2px;
+}
+.settings-pane {
+  min-height: 210px;
+}
+.settings-pane .setting-row:last-child {
+  border-bottom: none;
+}
+.settings-more {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 16px 0;
+  border-bottom: 1px solid #e2e5d3;
+  text-align: left;
+  font-size: 13px;
+  color: #4a5a39;
+}
+.settings-more span {
+  display: flex;
+  flex-direction: column;
+}
+.settings-more small {
+  font-size: 10px;
+  color: #626c49;
+  margin-top: 6px;
+}
+.settings-more b {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: #7d8459;
+}
+.settings-sub {
+  margin: 2px 0 6px;
+  padding: 0 12px;
+  border-radius: 12px;
+  background: #f1f0df;
+}
+.settings-sub .setting-row {
+  padding: 14px 0;
+  font-size: 12px;
+}
+.settings-sub .setting-row:last-child {
+  border-bottom: none;
+}
 .pill {
   font-size: 10px;
   padding: 7px 10px;

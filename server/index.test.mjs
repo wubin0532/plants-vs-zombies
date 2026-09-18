@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -174,6 +174,42 @@ describe('garden-api · 账号与会话', () => {
     const ok = await client.putSave(cookie, { version: 2, unlocked: 9 }, rev);
     expect(ok.status).toBe(200);
     expect((await ok.json()).updatedAt).toBeGreaterThan(rev);
+  });
+
+  it('两个账号的存档双向隔离：文件与接口都只看到自己的标记', async () => {
+    // 该用例放在乐观并发之后：它对 bob 存档内容的后续无依赖，且确保两个账号都已存在。
+    const loginA = await client.post('/api/auth/login', { username: alice, password: '1234' }, null, { 'X-Real-IP': ip(9) });
+    const cookieA = cookieFrom(loginA);
+    const loginB = await client.post('/api/auth/login', { username: bob, password: '5678' }, null, { 'X-Real-IP': ip(10) });
+    const cookieB = cookieFrom(loginB);
+
+    // 各自写一份带可识别标记的档
+    expect((await client.putSave(cookieA, { version: 2, unlocked: 11, mark: 'A' })).status).toBe(200);
+    expect((await client.putSave(cookieB, { version: 2, unlocked: 12, mark: 'B' })).status).toBe(200);
+
+    // 各读各的：只看到自己的标记
+    const saveA = await (await fetch(main.base + '/api/save', { headers: { Cookie: cookieA } })).json();
+    const saveB = await (await fetch(main.base + '/api/save', { headers: { Cookie: cookieB } })).json();
+    expect(saveA.save.data).toMatchObject({ unlocked: 11, mark: 'A' });
+    expect(saveB.save.data).toMatchObject({ unlocked: 12, mark: 'B' });
+
+    // A 再写一次，B 的档不受任何影响
+    expect((await client.putSave(cookieA, { version: 2, unlocked: 21, mark: 'A2' })).status).toBe(200);
+    const saveB2 = await (await fetch(main.base + '/api/save', { headers: { Cookie: cookieB } })).json();
+    expect(saveB2.save.data).toMatchObject({ unlocked: 12, mark: 'B' });
+
+    // 未登录读档仍是 401
+    expect((await fetch(main.base + '/api/save')).status).toBe(401);
+
+    // 落盘层面：恰好两个用户档，且各含自己的标记，没有互相覆盖
+    const savesDir = path.join(main.dataDir, 'saves');
+    const files = (await readdir(savesDir)).sort();
+    expect(files).toHaveLength(2);
+    const marks = (await Promise.all(files.map(async function (file) {
+      const parsed = JSON.parse(await readFile(path.join(savesDir, file), 'utf8'));
+      return parsed.data.mark;
+    }))).sort();
+    expect(marks).toEqual(['A2', 'B']);
   });
 
   it('拒绝跨站写请求（Origin 主机名不同）', async () => {
