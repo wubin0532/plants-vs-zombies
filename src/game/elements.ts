@@ -36,8 +36,9 @@ export function electricTarget(z: Zombie) {
   return attackTarget(z);
 }
 export function conductionTargets(origin: Zombie, enemies: Zombie[]) {
+  // 传导只沿同一排（不再跨 ±1 排），与电击的走位一致，避免跨排 AoE 过强。
   return enemies.filter(z => z.uid !== origin.uid && electricTarget(z) &&
-    Math.abs(z.x - origin.x) <= 2 && Math.abs(z.row - origin.row) <= 1)
+    z.row === origin.row && Math.abs(z.x - origin.x) <= 2)
     .sort((a, b) => Math.hypot(a.x - origin.x, a.row - origin.row) -
       Math.hypot(b.x - origin.x, b.row - origin.row) || a.uid - b.uid).slice(0, 3);
 }

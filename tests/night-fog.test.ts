@@ -67,7 +67,7 @@ describe("墓碑", () => {
 });
 
 describe("冰电平衡", () => {
-  it("同一僵尸 4 秒内只触发一次爆发，冷却中不消耗冰控", () => {
+  it("同一僵尸 5 秒内只触发一次爆发，冷却中不消耗冰控", () => {
     const e = new Engine(8, []);
     e.spawn("basic", 2, 5);
     const z = e.zombies[0];
@@ -75,15 +75,15 @@ describe("冰电平衡", () => {
     z.armor = 0;
     applyControl(z, "iceSlow", 30);
     e.electricHit(z, 20);
-    expect(z.hp).toBe(4880);
+    expect(z.hp).toBe(4920);
     expect(z.iceSlow).toBe(0);
     applyControl(z, "iceSlow", 30);
     e.electricHit(z, 20);
-    expect(z.hp).toBe(4860);
+    expect(z.hp).toBe(4900);
     expect(z.iceSlow).toBeGreaterThan(0);
     expect(e.reactions).toBe(1);
   });
-  it("冷却结束后可再次爆发，传导伤害为 40", () => {
+  it("冷却结束后可再次爆发，传导伤害为 30", () => {
     const e = new Engine(8, []);
     e.spawn("basic", 2, 5);
     const a = e.zombies[0];
@@ -95,11 +95,11 @@ describe("冰电平衡", () => {
     b.armor = 0;
     applyControl(a, "iceSlow", 30);
     e.electricHit(a, 20);
-    expect(b.hp).toBe(4960);
-    run(e, 4.1);
+    expect(b.hp).toBe(4970);
+    run(e, 5.1);
     applyControl(a, "iceSlow", 30);
     e.electricHit(a, 20);
-    expect(a.hp).toBe(4760);
+    expect(a.hp).toBe(4840);
     expect(e.reactions).toBe(2);
   });
 });

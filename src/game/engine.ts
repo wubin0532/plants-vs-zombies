@@ -489,20 +489,20 @@ export class Engine {
   }
   electricHit(z: Zombie, baseDamage: number) {
     if (!electricTarget(z)) return;
-    // 同一僵尸 4 秒内只能触发一次冰电爆发；冷却中命中不消耗冰控。
-    const ready = this.time - (z.reactAt ?? -Infinity) >= 4;
+    // 同一僵尸 5 秒内只能触发一次冰电爆发；冷却中命中不消耗冰控。
+    const ready = this.time - (z.reactAt ?? -Infinity) >= 5;
     // Capture the reaction before base damage can kill the primary target.
     const reaction = ready && consumeIce(z);
     const targets = reaction ? conductionTargets(z, this.zombies) : [];
     if (reaction) z.reactAt = this.time;
-    this.damage(z, baseDamage + (reaction ? 100 : 0));
+    this.damage(z, baseDamage + (reaction ? 60 : 0));
     this.sound(reaction ? "conduction" : "electric", z.x);
     if (!reaction) return;
     this.reactions++;
     this.effect(z.x, z.row, "iceBreak");
     for (const other of targets) {
       this.arcEffect(z.x, z.row, other.x, other.row, true);
-      this.damage(other, 40);
+      this.damage(other, 30);
     }
   }
   random() {
@@ -1217,7 +1217,7 @@ export class Engine {
       this.damage(z, 20);
       applyControl(z, "iceFreeze", 3);
       this.effect(z.x, z.row, "ice", "hammer");
-    } else this.electricHit(z, 120);
+    } else this.electricHit(z, 90);
   }
   shoot(
     p: Plant,
@@ -2008,7 +2008,7 @@ export class Engine {
             this.damage(z, 20);
             applyControl(z, "iceSlow", 5);
             this.effect(z.x, z.row, "ice", "bowl");
-          } else if (b.element === "electric") this.electricHit(z, 100);
+          } else if (b.element === "electric") this.electricHit(z, 80);
           else this.damage(z, 550);
           const rows = [b.row - 1, b.row + 1].filter(
             (r) => r >= 0 && r < this.level.rows,

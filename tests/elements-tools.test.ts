@@ -16,41 +16,42 @@ describe('冰电反应', () => {
   it('基础数值与第 1-8 关解锁', () => {
     expect(plantById.arc).toMatchObject({ cost: 225, hp: 300, cooldown: 7.5, damage: 40, interval: 1.4, unlock: 8 });
   });
-  it('一次满额反应造成 240 总伤害，消耗主目标冰冻但不消耗次级目标状态', () => {
+  it('一次满额反应造成 170 总伤害（同排至多 3 目标传导），消耗主目标冰冻但不消耗次级目标状态', () => {
     const e = new Engine(8, []), a = enemy(e);
-    const group = [enemy(e, 1, 5), enemy(e, 2, 6), enemy(e, 3, 5)];
+    const group = [enemy(e, 2, 4), enemy(e, 2, 5.5), enemy(e, 2, 6)];
     applyControl(a, 'iceFreeze', 4); applyControl(a, 'iceSlow', 10);
     for (const z of group) applyControl(z, 'iceSlow', 10);
     e.electricHit(a, 20);
-    expect(a.hp).toBe(1880); expect(a.freeze).toBe(0); expect(a.slow).toBe(0);
-    expect(group.map(z => z.hp)).toEqual([1960, 1960, 1960]);
+    expect(a.hp).toBe(1920); expect(a.freeze).toBe(0); expect(a.slow).toBe(0);
+    expect(group.map(z => z.hp)).toEqual([1970, 1970, 1970]);
     expect(group.every(z => z.iceSlow === 10)).toBe(true);
     expect(e.reactions).toBe(1);
     expect(e.effects.filter(fx => fx.type === 'conduction')).toHaveLength(3);
   });
-  it('按距离及编号选择至多三个目标，超范围不传导', () => {
+  it('传导只沿同一排：跨排与超范围不传导，同排按距离取至多 3 个', () => {
     const e = new Engine(8, []), a = enemy(e);
-    const group = [enemy(e, 1, 5), enemy(e, 3, 5), enemy(e, 2, 6), enemy(e, 2, 4)];
-    const distant = [enemy(e, 0, 5), enemy(e, 2, 7.01)];
+    const group = [enemy(e, 2, 4), enemy(e, 2, 4.5), enemy(e, 2, 6), enemy(e, 2, 6.5)];
+    const off = [enemy(e, 0, 5), enemy(e, 1, 5), enemy(e, 2, 7.01)];
     applyControl(a, 'iceSlow', 10); e.electricHit(a, 20);
-    expect(group.map(z => z.hp)).toEqual([1960, 1960, 1960, 2000]);
-    expect(distant.every(z => z.hp === 2000)).toBe(true);
+    // 同排 ≤2 格内最近 3 个（x4.5、x4、x6）各受 30；第 4 个 x6.5 超出名额
+    expect(group.map(z => z.hp)).toEqual([1970, 1970, 1970, 2000]);
+    expect(off.every(z => z.hp === 2000)).toBe(true);
   });
   it('主目标被基础伤害杀死也能传导，多个电源不重复消费同一冰系状态', () => {
-    const e = new Engine(8, []), a = enemy(e), b = enemy(e, 1, 5);
+    const e = new Engine(8, []), a = enemy(e), b = enemy(e, 2, 6);
     a.hp = 10; applyControl(a, 'iceSlow', 5);
     e.electricHit(a, 20); e.electricHit(a, 20);
-    expect(b.hp).toBe(1960); expect(e.reactions).toBe(1);
-    const c = enemy(e); applyControl(c, 'iceSlow', 5);
+    expect(b.hp).toBe(1970); expect(e.reactions).toBe(1);
+    const c = enemy(e, 2, 5); applyControl(c, 'iceSlow', 5);
     e.electricHit(c, 20); e.electricHit(c, 20);
-    expect(c.hp).toBe(1860); expect(e.reactions).toBe(2);
+    expect(c.hp).toBe(1900); expect(e.reactions).toBe(2);
   });
   it('伤害依次由护甲吸收，不穿甲', () => {
-    const e = new Engine(8, []), a = enemy(e), b = enemy(e, 1, 5);
+    const e = new Engine(8, []), a = enemy(e), b = enemy(e, 2, 6);
     a.armor = 100; b.armor = 200;
     applyControl(a, 'iceSlow', 5); e.electricHit(a, 20);
-    expect(a.hp).toBe(1980); expect(a.armor).toBe(0);
-    expect(b.hp).toBe(2000); expect(b.armor).toBe(160);
+    expect(a.hp).toBe(2000); expect(a.armor).toBe(20);
+    expect(b.hp).toBe(2000); expect(b.armor).toBe(170);
   });
   it('黄油、天气不能触发反应，消耗冰系后保留其余控制', () => {
     const e = new Engine(8, []), z = enemy(e);
@@ -66,7 +67,7 @@ describe('冰电反应', () => {
     expect(e.reactions).toBe(0);
   });
   it.each(['flying', 'underground', 'ally'] as const)('排除 %s 主目标与传导目标', field => {
-    const e = new Engine(8, []), z = enemy(e), a = enemy(e, 1, 5);
+    const e = new Engine(8, []), z = enemy(e), a = enemy(e, 2, 6);
     z[field] = true; applyControl(z, 'iceSlow', 5);
     e.electricHit(z, 20); expect(z.hp).toBe(2000);
     applyControl(a, 'iceSlow', 5); e.electricHit(a, 20); expect(z.hp).toBe(2000);
@@ -74,16 +75,16 @@ describe('冰电反应', () => {
   it('潜水隐藏目标免疫，露出攻击时可以被击中', () => {
     const e = new Engine(21, []), z = enemy(e, 2, 5, 'snorkel');
     applyControl(z, 'iceSlow', 5); e.electricHit(z, 20); expect(z.hp).toBe(2000);
-    z.action = 'eat'; e.electricHit(z, 20); expect(z.hp).toBe(1880);
+    z.action = 'eat'; e.electricHit(z, 20); expect(z.hp).toBe(1920);
   });
   it('电弧花实际攻击同排前方，冰冻射手实际子弹附带可反应的减速', () => {
     const e = new Engine(8, []);
     e.addPlant('snowpea', 2, 0); const p = e.addPlant('arc', 2, 1); p.timer = 2;
-    const a = enemy(e, 2, 3), b = enemy(e, 1, 3), behind = enemy(e, 2, 0);
+    const a = enemy(e, 2, 3), b = enemy(e, 2, 4), behind = enemy(e, 2, 0);
     behind.freeze = 20;
     run(e, 2.1);
     expect(e.reactions).toBeGreaterThan(0); expect(b.hp).toBeLessThan(2000);
-    expect(behind.hp).toBe(2000); expect(a.hp).toBeLessThan(1881);
+    expect(behind.hp).toBe(2000); expect(a.hp).toBeLessThan(1980);
   });
   it('寒冰菇冻结可触发冰电', () => {
     const e = new Engine(11, []), z = enemy(e);
@@ -167,9 +168,9 @@ describe('特殊模式与存档', () => {
     const e = new Engine(15, []), z = enemy(e), far = enemy(e, 0, 5);
     e.hitZombie(z.uid); expect(z.hp).toBe(1980);
     e.selectHammer('electric'); e.hitZombie(z.uid); expect(z.hp).toBe(1980);
-    run(e, 0.4); e.hitZombie(z.uid); expect(z.hp).toBe(1760); expect(e.reactions).toBe(1);
+    run(e, 0.4); e.hitZombie(z.uid); expect(z.hp).toBe(1830); expect(e.reactions).toBe(1);
     e.selectTool(); expect(e.useTool(2, 5)).toBe(true);
-    expect(z.hp).toBe(1760); expect(z.freeze).toBe(3); expect(far.freeze).toBe(0); expect(e.toolUses).toBe(2);
+    expect(z.hp).toBe(1830); expect(z.freeze).toBe(3); expect(far.freeze).toBe(0); expect(e.toolUses).toBe(2);
   });
   it('标记罐必定提供组合且只能领取一次，供卡不是无限自动获得', () => {
     const e = new Engine(35, []); expect(e.conveyor).toHaveLength(0);
