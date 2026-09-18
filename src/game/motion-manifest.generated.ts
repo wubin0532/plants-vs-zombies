@@ -48,7 +48,6 @@ export const motionPlantFrames: Record<string, number> = {
   "wallnut": 8,
   "potato": 8,
   "sunshroom": 8,
-  "grave": 8,
   "hypno": 8,
   "ice": 8,
   "doom": 8,

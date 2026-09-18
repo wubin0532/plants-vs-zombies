@@ -1,4 +1,5 @@
 import sharp from "sharp";
+import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 
 /**
@@ -47,18 +48,31 @@ await mkdir("public/assets/cards", { recursive: true });
 
 const idleRanges = {};
 for (const id of plantIds) {
-  const source = `public/assets/animation/${id}.webp`;
+  const anim = `public/assets/animation/${id}.webp`;
+  const hasAnim = existsSync(anim);
+  // 没有动作图集的植物（如墓碑吞噬者）直接用立绘生成卡片。
+  const source = hasAnim ? anim : `public/assets/portraits/p-${id}.webp`;
+  if (!existsSync(source)) {
+    console.warn(`跳过 ${id}：既无动作图也无立绘`);
+    continue;
+  }
   const count = motionFrames[id] ?? 16;
   const idleCount = id === "chomper" ? 4 : count <= 8 ? 4 : 8;
 
   const heights = [];
-  for (let f = 0; f < idleCount; f++) heights.push(await frameHeight(source, f));
-  idleRanges[id] = Math.max(...heights) - Math.min(...heights);
+  if (hasAnim) {
+    for (let f = 0; f < idleCount; f++) heights.push(await frameHeight(source, f));
+    idleRanges[id] = Math.max(...heights) - Math.min(...heights);
+  } else {
+    idleRanges[id] = 0;
+  }
 
-  const cell = await sharp(source)
-    .extract({ left: 0, top: 0, width: 256, height: 256 })
-    .png()
-    .toBuffer();
+  const cell = hasAnim
+    ? await sharp(source)
+        .extract({ left: 0, top: 0, width: 256, height: 256 })
+        .png()
+        .toBuffer()
+    : await sharp(source).png().toBuffer();
   const trimmed = await sharp(cell).trim({ threshold: 18 }).png().toBuffer();
   const fitted = await sharp(trimmed)
     .resize(W - 14, H - 18, { fit: "inside" })

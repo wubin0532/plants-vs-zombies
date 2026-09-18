@@ -1,5 +1,7 @@
 import { it, expect } from "vitest";
 import sharp from "sharp";
+// @ts-ignore 脚本侧模块没有类型声明
+import { sourcePath } from "../scripts/lib/assets.mjs";
 import { plants } from "../src/game/content";
 
 /**
@@ -34,6 +36,8 @@ for (const def of plants) {
     expect(box.top).toBeGreaterThanOrEqual(4);
     expect(160 - (box.left + box.w)).toBeGreaterThanOrEqual(4);
     expect(160 - (box.top + box.h)).toBeGreaterThanOrEqual(4);
+    // 无动作图集的植物由立绘生成（墓碑吞噬者），不做首帧比对。
+    if (!sourcePath(`public/assets/animation/${def.id}`)) return;
     // 卡片等比缩自战斗图首帧：内容宽高比必须与首帧一致，旧立绘会被这条拦住。
     const cell = await sharp(`public/assets/animation/${def.id}.webp`)
       .extract({ left: 0, top: 0, width: 256, height: 256 })

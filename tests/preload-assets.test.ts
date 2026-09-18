@@ -133,16 +133,18 @@ describe("战斗预加载：只加载本局可能出现的资源", () => {
     }
   });
 
-  it("每个必载植物都有动作图集（无动作图的才回退立绘）", () => {
+  it("每个必载植物都能解析到动作图集或卡片 fallback", () => {
+    const cardFiles = import.meta.glob("../public/assets/cards/*.webp");
     for (const level of levels) {
       const plantIds = requiredPlantIds(level, plants.map((p) => p.id), "pea");
       for (const id of plantIds) {
         expect(plantById[id], `${level.label} 植物 ${id} 未登记`).toBeTruthy();
-        // 目前 50 株植物全部有动作图集（chomper 用专属图集），立绘只服务
-        // 拖拽预览/滚球；这条断言保证以后新增无图植物时会被发现。
+        // 有动作图集的用图集；没有的（墓碑吞噬者）回退到卡片贴图，
+        // 卡片由 card-assets 契约保证存在。
+        const hasCard = `../public/assets/cards/p-${id}.webp` in cardFiles;
         expect(
-          isMotionPlant(id) || id === "chomper",
-          `${level.label} 植物 ${id} 既没有动作图集也没有立绘 fallback`,
+          isMotionPlant(id) || id === "chomper" || hasCard,
+          `${level.label} 植物 ${id} 既没有动作图集也没有卡片 fallback`,
         ).toBe(true);
       }
     }
