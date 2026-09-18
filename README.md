@@ -27,7 +27,7 @@ npm run preview
 
 - 后端位于 `server/`，只用 Node 内置模块，无需安装任何依赖，也不用数据库：账号写入 `users.json`，每人一份 `saves/<id>.json`，会话密钥为 `secret.key`。
 - 本地启动：`DATA_DIR=./data PORT=8787 node server/index.mjs`。Vite 开发服务器已配置 `/api` 代理，`npm run dev` 即可前后端联调。
-- 接口：`POST /api/auth/register|login|logout`、`GET /api/me`、`GET|PUT /api/save`、`GET /api/health`。密码用 scrypt 哈希，会话为带版本号的 HMAC 签名 Cookie（`HttpOnly; SameSite=Lax`，30 天）；登出会递增会话版本，使旧 Cookie 立即失效。写操作校验同源 Origin。
+- 接口：`POST /api/auth/register|login|logout`、`GET /api/me`、`GET|PUT /api/save`、`GET /api/health`。密码用 scrypt 哈希，会话为带版本号的 HMAC 签名 Cookie（`HttpOnly; SameSite=Lax`，30 天）；登出会递增会话版本，使旧 Cookie 立即失效。可选 `ALLOWED_ORIGINS` 白名单做同源写校验；默认不拒绝（避免反向代理改写 Host 误伤），经典 CSRF 由 `SameSite=Lax` 与 JSON Content-Type 挡住。
 - 默认最多 5 个账号，可用环境变量 `MAX_USERS` 调整。通过 HTTPS 访问时给后端加上 `COOKIE_SECURE=1`；纯 HTTP 局域网访问保持不设置，否则浏览器不会保存登录 Cookie。
 - 限流默认按 TCP 来源地址计数，无法用伪造的 `X-Forwarded-For` 绕过。仅当后端只被受信反代访问、且端口不对局域网发布时，才设置 `TRUST_PROXY=1` 并信任 Nginx 覆盖写的 `X-Real-IP`。全部变量见 `.env.example`。
 

@@ -25,6 +25,13 @@ const COOKIE_NAME = 'pvz_session';
 const COOKIE_SECURE = process.env.COOKIE_SECURE === '1';
 // 仅当本服务只被受信反向代理访问时开启；开启后按 X-Real-IP（代理覆盖写）计数。
 const TRUST_PROXY = process.env.TRUST_PROXY === '1';
+// 可选 Origin 白名单（逗号分隔）。留空时不启用 Origin 拒绝，见 originAllowed()。
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map(function (value) {
+    return value.trim().replace(/\/+$/, '');
+  })
+  .filter(Boolean);
 const MAX_BODY = 300 * 1024;
 const MAX_SAVE = 256 * 1024;
 const WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 60 * 1000);
@@ -85,17 +92,31 @@ function send(res, status, payload, headers) {
   res.end(body);
 }
 
-/** 浏览器跨站写请求的纵深防御：Origin 与 Host 不一致则拒绝。 */
-function sameOrigin(req) {
+/**
+ * 跨站写请求的纵深防御。
+ *
+ * 经典 CSRF 已经由 SameSite=Lax（跨站 POST 不带 Cookie）+ 必须 application/json
+ * （跨站简单表单发不出该 Content-Type，fetch 会先触发不会被应答的预检）挡住。
+ * 反向代理链路常会改写 Host（丢端口、换公网域名），无法可靠推断"本应是哪个源"，
+ * 因此这里**默认放行**，只有在显式配置 ALLOWED_ORIGINS 时才按白名单严格拒绝。
+ */
+function originAllowed(req) {
   const origin = req.headers.origin;
   if (!origin) return true;
-  const host = req.headers.host;
-  if (!host) return true;
+  if (!ALLOWED_ORIGINS.length) return true;
+  let normalized;
   try {
-    return new URL(origin).host === host;
+    normalized = new URL(origin).origin;
   } catch (error) {
     return false;
   }
+  return ALLOWED_ORIGINS.some(function (allowed) {
+    try {
+      return new URL(allowed).origin === normalized;
+    } catch (error) {
+      return allowed === origin;
+    }
+  });
 }
 
 function readBody(req) {
@@ -217,7 +238,8 @@ async function route(req, res) {
   const method = req.method || 'GET';
   const ip = clientIp(req);
   const mutating = method === 'POST' || method === 'PUT' || method === 'DELETE';
-  if (mutating && !sameOrigin(req)) {
+  if (mutating && !originAllowed(req)) {
+    console.warn('[garden-api] 跨站请求被拒绝 origin=' + (req.headers.origin || '') + ' host=' + (req.headers.host || ''));
     return send(res, 403, { error: '跨站请求被拒绝' });
   }
 

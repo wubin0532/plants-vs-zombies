@@ -86,6 +86,7 @@ beforeAll(async () => {
     RATE_LIMIT_WINDOW_MS: '300',
     RATE_LIMIT_MAX: '20',
     SAVE_RATE_LIMIT_MAX: '100',
+    ALLOWED_ORIGINS: 'https://game.wubin.ink:8443,http://127.0.0.1:5888',
   });
   client = makeClient(main.base);
 });
@@ -175,13 +176,28 @@ describe('garden-api · 账号与会话', () => {
     expect((await ok.json()).updatedAt).toBeGreaterThan(rev);
   });
 
-  it('拒绝跨站写请求（Origin 与 Host 不一致）', async () => {
+  it('拒绝跨站写请求（Origin 主机名不同）', async () => {
     const response = await fetch(main.base + '/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example' },
       body: JSON.stringify({ username: alice, password: '1234' }),
     });
     expect(response.status).toBe(403);
+  });
+
+  it('ALLOWED_ORIGINS 内的来源放行（公网域名 / 反代丢端口）', async () => {
+    for (const origin of ['https://game.wubin.ink:8443', 'http://127.0.0.1:5888']) {
+      const response = await fetch(main.base + '/api/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Origin: origin,
+          'X-Real-IP': '198.51.100.250',
+        },
+        body: JSON.stringify({ username: 'nobody', password: 'nope' }),
+      });
+      expect(response.status, origin).toBe(401);
+    }
   });
 
   it('TRUST_PROXY=1 时按 X-Real-IP 分桶，超限返回 429 且不影响其它 IP', async () => {
@@ -222,6 +238,15 @@ describe('garden-api · 限流与保存限额（不信任代理）', () => {
     // 全部来自 127.0.0.1，共用一个桶：20 次 401 + 1 次 429
     expect(statuses.filter(function (s) { return s === 429; })).toHaveLength(1);
     expect(statuses.filter(function (s) { return s === 401; })).toHaveLength(20);
+  });
+
+  it('未配置 ALLOWED_ORIGINS 时不拒绝任何 Origin（避免反代误伤）', async () => {
+    // 上一个测试打满了 127.0.0.1 的登录额度，等窗口过期
+    await new Promise(function (resolve) { setTimeout(resolve, 400); });
+    const response = await c.post('/api/auth/login', { username: 'nobody', password: 'nope' }, null, {
+      Origin: 'https://evil.example',
+    });
+    expect(response.status).toBe(401);
   });
 
   it('PUT /api/save 有按用户的宽松限流', async () => {
