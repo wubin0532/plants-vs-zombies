@@ -180,8 +180,20 @@ const key = "pvz-garden-save-v1";
 const localAtKey = "pvz-garden-save-local-at";
 let pushTimer: number | undefined;
 let suppressPush = false;
+/** 基础卡槽数；6→10 全部由商店扩容承担，不再随章节免费增加。 */
+export const BASE_SEED_SLOTS = 6;
+export const MAX_SEED_SLOTS = 10;
+export const MAX_SEED_SLOT_PURCHASES = MAX_SEED_SLOTS - BASE_SEED_SLOTS;
+export const totalSeedSlots = (seedSlots: number) =>
+  Math.min(
+    MAX_SEED_SLOTS,
+    BASE_SEED_SLOTS + Math.max(0, Math.trunc(seedSlots)),
+  );
+/** 第 N 次扩容的价格，越升越贵；第 4 次之后已满级。 */
+const SEED_SLOT_PRICES = [600, 1400, 2800, 4800];
 export const seedSlotPriceFor = (seedSlots: number) =>
-  seedSlots === 0 ? 1500 : seedSlots < 4 ? 2500 : 5000;
+  SEED_SLOT_PRICES[seedSlots] ??
+  SEED_SLOT_PRICES[SEED_SLOT_PRICES.length - 1];
 export const useSave = defineStore("save", {
   state: () => ({
     data: initial(),
@@ -310,7 +322,8 @@ export const useSave = defineStore("save", {
       delete this.data.lossStreak[level];
       this.persist();
     },
-    /** 每日挑战与自定义模式不解锁冒险进度，但局内收集的金币照常入账。 */
+    /** 自定义模式不解锁冒险进度，但局内收集的金币照常入账。
+     *  每日挑战不再调用它：每日挑战是纯挑战，不掉金币、也不进商店。 */
     addCoins(coins: number) {
       if (!Number.isFinite(coins) || coins <= 0) return;
       this.data.coins += Math.floor(coins);

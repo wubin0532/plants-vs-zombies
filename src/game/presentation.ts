@@ -59,6 +59,35 @@ export function plantBodyPose(p: Plant) {
  if(p.id==='cob') angle=-attack*5;
  return {scaleX,scaleY,angle};
 }
+const WATER_PLANTS = new Set(['lily','kelp','sea','cattail']);
+const FLICKER_PLANTS = new Set(['cherry','doom','jalapeno']);
+const SPIN_PLANTS = new Set(['magnet','goldmagnet','hypno']);
+const MUSHROOM_PLANTS = new Set(['puff','scaredy','fume','gloom','sunshroom','ice','doom','hypno']);
+const RIGID_PLANTS = new Set(['wallnut','tallnut','pumpkin','potato','pot','grave','spike','spikerock','imitater']);
+const LOBBER_PLANTS = new Set(['cabbage','kernel','melon','winter','cob']);
+/**
+ * 待机时叠加的平滑程序化动作：在换帧姿势之间补足呼吸感，并按植物类型区分——
+ * 水生摇曳、三叶草翻飞、爆炸植物闪烁、磁力/催眠旋转、硬质植物几乎不动……
+ * 只影响表现，不改变战斗数值与命中时序。
+ */
+export function plantIdlePose(p: Plant) {
+ if(p.sleep) return {scaleX:1,scaleY:1,angle:0,offsetY:0};
+ const slow=Math.sin(p.age*1.6+p.uid), mid=Math.sin(p.age*2.6+p.uid*1.3);
+ let scaleX=1,scaleY=1,angle=0,offsetY=slow*2.2;
+ if(WATER_PLANTS.has(p.id)) {scaleX+=mid*.03;scaleY+=slow*.015;angle+=mid*2.8;offsetY=slow*3.4;}
+ else if(p.id==='blover') {angle+=Math.sin(p.age*7+p.uid)*7;scaleX+=slow*.03;offsetY=Math.sin(p.age*4+p.uid)*2;}
+ else if(FLICKER_PLANTS.has(p.id)) {scaleX+=Math.sin(p.age*22+p.uid)*.035;scaleY+=Math.abs(Math.sin(p.age*17+p.uid))*.06;offsetY=Math.sin(p.age*12+p.uid)*1.2;}
+ else if(SPIN_PLANTS.has(p.id)) {angle+=mid*2.4;offsetY=slow*1.6;}
+ else if(p.id==='torch') {scaleX+=Math.sin(p.age*9+p.uid)*.028;scaleY+=slow*.022;offsetY=Math.sin(p.age*5+p.uid)*1.6;}
+ else if(p.id==='chomper') {scaleY+=slow*.03;scaleX+=mid*.024;offsetY=slow*2.6;}
+ else if(p.id==='squash') {scaleX+=slow*.022;scaleY-=slow*.022;offsetY=slow*1.8;}
+ else if(p.id==='garlic') {angle+=mid*1.8;offsetY=slow*1.4;}
+ else if(MUSHROOM_PLANTS.has(p.id)) {scaleY+=mid*.028;scaleX+=slow*.01;offsetY=slow*2.4;}
+ else if(LOBBER_PLANTS.has(p.id)) {angle+=slow*1.5;scaleX+=slow*.014;offsetY=slow*1.6;}
+ else if(RIGID_PLANTS.has(p.id)) {scaleY+=slow*.008;angle+=slow*.3;offsetY=slow*.6;}
+ else {scaleY+=slow*.035;scaleX+=mid*.018;angle+=slow*.9;offsetY=slow*2.6;}
+ return {scaleX,scaleY,angle,offsetY};
+}
 export function zombieAccent(z: Zombie): Illustration | null {
  if(z.freeze>0) return 'iceblock';
  if(z.underground) return 'dust';

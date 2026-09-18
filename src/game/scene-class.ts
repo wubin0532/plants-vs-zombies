@@ -1,6 +1,6 @@
 import { FogRenderer } from "./fog-render";
 import { foggedAt, lanternsIn, torchesIn } from "./visibility";
-import { presentationAssets, presentationImage, projectileVisual, projectileHidden, plantAccent, plantBodyPose, zombieAccent, zombieVisualPose } from "./presentation";
+import { presentationAssets, presentationImage, projectileVisual, projectileHidden, plantAccent, plantBodyPose, plantIdlePose, zombieAccent, zombieVisualPose } from "./presentation";
 import Phaser from "phaser";
 import { plants, zombies, plantById } from "./content";
 import { plantImage, zombieImage, gardenImage, effectImage, bowlImage, mistImage, mowerImage, terrainImage, waterImage, tokenImage } from "./art";
@@ -491,6 +491,7 @@ export class GardenScene extends Phaser.Scene {
         p.timer < 0.18
           ? Math.sin((1 - p.timer / 0.18) * Math.PI) * 0.035
           : 0;
+      const idle = plantIdlePose(p);
       const obj = this.sprite(
         key,
         p.id === "chomper"
@@ -499,7 +500,7 @@ export class GardenScene extends Phaser.Scene {
             ? "plantanim-" + p.id
             : p.id,
         this.x(p.col) + (p.hurt ? Math.sin(p.hurt * 65) * 3 : 0),
-        feetY(p.row, e.level.rows) - (base ? 0 : 0),
+        feetY(p.row, e.level.rows) + idle.offsetY,
         (base ? 90 : 86) * bodyScale,
         (base ? 45 : 86) * bodyScale,
         p.row * 10 + (base ? 1 : p.layer === "armor" ? 4 : 3),
@@ -515,7 +516,15 @@ export class GardenScene extends Phaser.Scene {
       obj
         .setOrigin(0.5, p.id === "chomper" || motion ? 249 / 256 : 0.95)
         .setAlpha(p.sleep ? 0.65 : 1);
-      if (!motion) {
+      if (motion || p.id === "chomper") {
+        // 动作图集负责姿势；plantIdlePose 按植物类型补足呼吸与摆动，
+        // 攻击瞬间再叠加一记缩放冲击，让战斗时的动作更明显。
+        obj.setScale(
+          obj.scaleX * idle.scaleX * (1 + recoil * 0.04),
+          obj.scaleY * idle.scaleY * (1 - recoil * 0.03),
+        );
+        obj.setAngle(idle.angle);
+      } else {
         obj.setScale(
           obj.scaleX * (1 + breathing + anticipation - recoil * 0.065),
           obj.scaleY * (1 - breathing - anticipation + recoil * 0.045),

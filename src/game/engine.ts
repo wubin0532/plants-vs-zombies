@@ -264,6 +264,14 @@ export class Engine {
   eventKind: "" | "rain" | "wind" = "";
   rainUntil = 0;
   windUntil = 0;
+  /** 每日词缀：天降阳光间隔覆盖（0 = 默认 4/6 秒）。 */
+  skySunInterval = 0;
+  /** 黄金僵尸出现概率。 */
+  goldenChance = 0.02;
+  /** 是否掉落金币：每日挑战关掉，保持纯挑战、不影响商店经济。 */
+  coinDrops = true;
+  /** 每日词缀：天气事件是否循环触发。 */
+  weatherLoop = false;
   private rng: number;
   private natural = 4;
   private beltTimer = 0;
@@ -326,6 +334,11 @@ export class Engine {
       this.eventAt = this.settings.duration * (0.3 + this.random() * 0.4);
       this.eventKind = this.random() < 0.5 ? "rain" : "wind";
     }
+  }
+  /** 每日词缀：覆盖天降阳光间隔，并重置当前计时。 */
+  setSkySunInterval(seconds: number) {
+    this.skySunInterval = Math.max(1, seconds);
+    this.natural = this.skySunInterval;
   }
   get isBelt() {
     return ["conveyor", "bowling", "storm", "boss", "vases"].includes(
@@ -1352,7 +1365,6 @@ export class Engine {
       this.assaultAlert = null;
     }
     if (this.eventAt > 0 && this.time >= this.eventAt) {
-      this.eventAt = -1;
       if (this.eventKind === "rain") {
         this.rainUntil = this.time + RAIN_DURATION;
         for (const p of this.plants)
@@ -1370,6 +1382,7 @@ export class Engine {
         this.say("寒风过境！冰霜凝结，僵尸们被冻得行动迟缓");
         this.sound("frost");
       }
+      this.eventAt = this.weatherLoop ? this.time + 45 : -1;
     }
     for (const p of this.plants)
       if (p.attackAge !== undefined) p.attackAge += dt;
@@ -1391,7 +1404,8 @@ export class Engine {
           this.random() * (this.level.rows - 1),
           25, false, "sky",
         );
-        this.natural = this.time < this.rainUntil ? 3 : 6;
+        this.natural =
+          this.time < this.rainUntil ? 3 : this.skySunInterval || 6;
       }
     }
     if (this.isBelt) {
@@ -1427,9 +1441,10 @@ export class Engine {
         this.level.mode === "whack" ? 4 + this.random() * 4 : 9.6,
       );
       if (
+        this.coinDrops &&
         this.level.mode === "normal" &&
         !DANGER_ZOMBIES.has(id) &&
-        this.random() < 0.02
+        this.random() < this.goldenChance
       ) {
         this.zombies.at(-1)!.golden = true;
         this.say("黄金僵尸出现了！击败它获得金币");
@@ -1510,7 +1525,7 @@ export class Engine {
             ? 36
             : 24;
       }
-      if (d.kind === "coin") {
+      if (this.coinDrops && d.kind === "coin") {
         if (p.id === "goldmagnet") {
           // 金币 16 秒消失，24 秒的固定间隔会漏币：有币快消失时立刻收取。
           if (p.timer <= 0 || this.tokens.some((t) => t.coin && t.age > 13)) {
@@ -1999,9 +2014,11 @@ export class Engine {
         fx.zombie = { ...z };
         fx.height = jumpHeight(z);
       }
-      if (this.random() < 0.04) this.token(z.x, z.row, 5, true);
-      if (z.golden)
-        this.token(z.x, z.row, 100 + Math.floor(this.random() * 51), true);
+      if (this.coinDrops) {
+        if (this.random() < 0.04) this.token(z.x, z.row, 5, true);
+        if (z.golden)
+          this.token(z.x, z.row, 100 + Math.floor(this.random() * 51), true);
+      }
     }
     const killsNow = dead.filter((z) => !z.ally);
     if (killsNow.length) {

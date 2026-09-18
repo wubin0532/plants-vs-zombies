@@ -34,6 +34,7 @@ server/data/
 # Internal planning/audit docs and raw asset sources (keep local only)
 docs/
 assets-source/
+PVZ重绘/
 
 # Generated offline audio exports; the soundtrack is synthesized at runtime in WebAudio
 # (see scripts/export-audio-playwright.js -> output/pvz-audio.zip)

@@ -8,10 +8,13 @@ import { checkAchievements } from "../src/achievements";
 it("每日挑战由日期决定，必带产阳光植物，夜间用蘑菇", () => {
   const a = dailyChallenge(new Date(2026, 8, 14), 50);
   expect(a).toEqual(dailyChallenge(new Date(2026, 8, 14), 50));
-  expect(a.seed).toBe(20260914);
+  // 种子改为日期哈希（旧实现直接用日期数字，导致关卡几十天不变）。
+  expect(a.seed).toBeGreaterThan(0);
+  expect(a.seed).toBeLessThanOrEqual(0xffffffff);
   for (let d = 1; d <= 28; d++) {
     const c = dailyChallenge(new Date(2026, 0, d), 50);
-    expect(c.cards.length).toBeGreaterThanOrEqual(6);
+    // 词缀「精简卡组」会把张数压到 4；「加宽卡组」上限仍是 8。
+    expect(c.cards.length).toBeGreaterThanOrEqual(4);
     expect(c.cards.length).toBeLessThanOrEqual(8);
     expect(c.cards).toContain(
       isNight(levels[c.levelId - 1].scene) ? "sunshroom" : "sunflower",
@@ -76,10 +79,11 @@ it("新存档字段宽松校验，非法值丢弃", () => {
   expect(save.fontSize).toBe("standard");
 });
 it("种子槽价格阶梯与存档迁移", () => {
-  expect(seedSlotPriceFor(0)).toBe(1500);
-  expect(seedSlotPriceFor(1)).toBe(2500);
-  expect(seedSlotPriceFor(3)).toBe(2500);
-  expect(seedSlotPriceFor(4)).toBe(5000);
+  expect(seedSlotPriceFor(0)).toBe(600);
+  expect(seedSlotPriceFor(1)).toBe(1400);
+  expect(seedSlotPriceFor(2)).toBe(2800);
+  expect(seedSlotPriceFor(3)).toBe(4800);
+  expect(seedSlotPriceFor(4)).toBe(4800); // 已满级，价格不再变化
 
   const save = validateSave({
     ...initial(),

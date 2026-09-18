@@ -1,5 +1,7 @@
 const base = import.meta.env.BASE_URL;
-export const plantImage = (id: string) => `${base}assets/portraits/p-${id}.${id === "arc" ? "svg" : "webp"}`;
+// 卡片统一取自战斗动作图的待机首帧（scripts/prepare-cards.mjs），
+// 保证选卡/图鉴/拖拽预览与场上植物是同一张美术。
+export const plantImage = (id: string) => `${base}assets/cards/p-${id}.webp`;
 export const zombieImage = (id: string) =>
   `${base}assets/portraits/z-${id}.webp`;
 export const effectImage = (frame: number) =>
@@ -21,3 +23,17 @@ export const tokenImage = (kind: "token-sun" | "token-coin") =>
   `${base}assets/tokens/${kind}.webp`;
 
 export const bowlImage = (element: "ice" | "electric") => `${base}assets/portraits/b-${element}.svg`;
+
+/** UI 图标（AI 重绘，见 docs/ui-icon-prompts.md）：暂停菜单、工具、设置等。 */
+export type UiIconName =
+  | "resume"
+  | "restart"
+  | "home"
+  | "shovel"
+  | "transplant"
+  | "settings"
+  | "menu"
+  | "sound-on"
+  | "sound-off"
+  | "exit-fullscreen";
+export const uiIcon = (name: UiIconName) => `${base}assets/icons/ui-${name}.webp`;

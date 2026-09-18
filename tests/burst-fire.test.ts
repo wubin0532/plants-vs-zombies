@@ -285,11 +285,9 @@ describe("每日卡池可用火力", () => {
       );
     });
 
-  it("回归 2026-02-15 / 解锁 50：白天第 7 关有可工作攻击方案", () => {
+  it("回归 2026-02-15 / 解锁 50：当日卡池有可工作攻击方案", () => {
     const d = dailyChallenge(new Date(2026, 1, 15), 50);
-    expect(d.levelId).toBe(7);
     const scene = levels.find((l) => l.id === d.levelId)!.scene;
-    expect(scene).toBe("day");
     expect(works(d.cards, scene)).toBe(true);
   });
 

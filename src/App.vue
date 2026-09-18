@@ -21,15 +21,28 @@ import {
   combatGuide,
 } from "./game/content";
 import type { PlantDef, ZombieDef } from "./game/content";
-import { plantImage, zombieImage, gardenImage, bowlImage } from "./game/art";
+import {
+  plantImage,
+  zombieImage,
+  gardenImage,
+  bowlImage,
+  tokenImage,
+  uiIcon,
+} from "./game/art";
 import { battleSettings, defaultOptions } from "./game/difficulty";
-import { dailyChallenge } from "./game/daily";
+import { applyDailyMods, dailyChallenge } from "./game/daily";
 import { achievementDefs, checkAchievements } from "./achievements";
 import { Engine } from "./game/engine";
 import { mountGame } from "./game/scene";
 import { GardenAudio } from "./game/audio";
 import type { SoundKind } from "./game/audio";
-import { seedSlotPriceFor, useSave } from "./store";
+import {
+  BASE_SEED_SLOTS,
+  MAX_SEED_SLOTS,
+  seedSlotPriceFor,
+  totalSeedSlots,
+  useSave,
+} from "./store";
 import { useAuth } from "./auth";
 const save = useSave();
 const auth = useAuth();
@@ -57,6 +70,8 @@ const chosen = ref<string[]>([]),
   loseTip = ref(""),
   denied = ref(""),
   dailyMode = ref(false),
+  dailySalt = ref(0),
+  dailyOfficial = ref(true),
   newAchievements = ref<string[]>([]),
   full = ref(false),
   file = ref<HTMLInputElement>(),
@@ -73,12 +88,8 @@ const level = computed(() => levels[levelId.value - 1]);
 const available = computed(() =>
   plants.filter((p) => p.unlock <= save.data.unlocked),
 );
-const slots = computed(() =>
-  Math.min(
-    10,
-    6 + Math.floor((save.data.unlocked - 1) / 10) + save.data.seedSlots,
-  ),
-);
+// 卡槽只由商店扩容决定：基础 6，最多 10（规则方案 A，不再随章节免费增加）。
+const slots = computed(() => totalSeedSlots(save.data.seedSlots));
 const garden = computed(() => gardenImage(level.value.scene));
 const levelHint = computed(() => {
   const l = level.value;
@@ -257,7 +268,9 @@ const loseTips = [
   "寒冰射手能拖慢僵尸，为防线争取时间。",
   "土豆地雷便宜又实用，开局先埋几颗。",
 ];
-const daily = computed(() => dailyChallenge(new Date(), save.data.unlocked));
+const daily = computed(() =>
+  dailyChallenge(new Date(), save.data.unlocked, dailySalt.value),
+);
 // 战斗中的种子栏与关卡信息：每日挑战使用每日卡池与每日关卡，而不是冒险选卡。
 const battleCards = computed(() =>
   dailyMode.value ? daily.value.cards : chosen.value,
@@ -360,10 +373,27 @@ const shopItems = [
     img: "mower",
   },
 ];
+const coinArt = tokenImage("token-coin");
 const seedSlotPrice = computed(() => seedSlotPriceFor(save.data.seedSlots));
-const seedSlotsFull = computed(() => slots.value >= 10);
+const seedSlotsFull = computed(() => slots.value >= MAX_SEED_SLOTS);
+const shopAffordable = computed(
+  () =>
+    shopItems.some((i) => save.data.coins >= i.price) ||
+    (!seedSlotsFull.value && save.data.coins >= seedSlotPrice.value),
+);
+// 购买成功后给对应卡片一个短暂高亮脉冲。
+const boughtPulse = ref("");
+function markBought(id: string) {
+  boughtPulse.value = id;
+  window.setTimeout(() => {
+    if (boughtPulse.value === id) boughtPulse.value = "";
+  }, 600);
+}
 function buy(item: (typeof shopItems)[number]) {
-  if (save.buyItem(item.id, item.price)) audio.play("sun");
+  if (save.buyItem(item.id, item.price)) {
+    audio.play("sun");
+    markBought(item.id);
+  }
 }
 function buySeedSlot() {
   if (seedSlotsFull.value || save.data.coins < seedSlotPrice.value) return;
@@ -371,8 +401,17 @@ function buySeedSlot() {
   save.data.seedSlots += 1;
   save.persist();
   audio.play("sun");
+  markBought("seed-slot");
 }
 function startDaily() {
+  // 主页入口固定用官方每日种子；“换一局”才使用随机盐。
+  dailySalt.value = 0;
+  dailyMode.value = true;
+  void start();
+}
+function rerollDaily() {
+  // 换一局：随机盐重抽关卡与卡池，成绩不计入官方最佳。
+  dailySalt.value = (Math.random() * 0xffffffff) >>> 0;
   dailyMode.value = true;
   void start();
 }
@@ -420,6 +459,7 @@ async function start() {
   const d = dailyMode.value ? daily.value : null;
   if (starting || (!d && !chosen.value.length)) return;
   starting = true;
+  dailyOfficial.value = dailySalt.value === 0;
   bootError.value = "";
   const generation = ++gameGeneration;
   try {
@@ -433,9 +473,10 @@ async function start() {
         d ? d.levelId : levelId.value,
         d ? d.cards : [...chosen.value],
         d ? d.seed : levelId.value * 719,
-        d ? defaultOptions() : save.data.options,
+        d ? d.options : save.data.options,
       ),
     );
+    if (d) applyDailyMods(engine.value, d.mods);
     engine.value.imitate = imitate.value;
     engine.value.toolsUnlocked ||= save.data.unlocked >= 6;
     const items = save.data.items;
@@ -486,9 +527,8 @@ async function start() {
           const mowersIntact = e.mowersLost === 0;
           if (e.status === "won") {
             if (dailyMode.value) {
-              save.recordDaily(daily.value.date, e.time);
-              // 每日挑战不影响冒险进度，但局内金币照常入账。
-              save.addCoins(e.coins);
+              // 每日挑战不结算金币，只记最佳成绩。
+              if (dailyOfficial.value) save.recordDaily(daily.value.date, e.time);
             } else if (e.settings.difficulty !== "custom") {
               save.win(levelId.value, e.coins);
               // 第三颗星要求速通：最后一波固定在 duration - 45 秒刷完
@@ -959,7 +999,7 @@ onBeforeUnmount(() => {
             if (engine) engine.paused = true;
           "
         >
-          ⚙
+          <img class="gear-icon" :src="uiIcon('settings')" alt="" />
         </button>
       </div>
     </header>
@@ -1049,7 +1089,9 @@ onBeforeUnmount(() => {
                 {{
                   save.data.daily.date === daily.date
                     ? `今日已完成 · 最佳 ${Math.floor(save.data.daily.best / 60)}:${String(save.data.daily.best % 60).padStart(2, "0")}`
-                    : "今日未挑战 · 随机关卡与卡池"
+                    : daily.mods.length
+                      ? "今日变体：" + daily.mods.map((m) => m.name).join(" · ")
+                      : "今日未挑战 · 随机关卡与卡池"
                 }}
               </p></span
             ><b>↗</b>
@@ -1066,8 +1108,7 @@ onBeforeUnmount(() => {
       </template>
       <template v-else-if="page === 'select'">
         <section class="section-title">
-          <div>
-            <p class="kicker">PREPARE YOUR GARDEN</p>
+          <div class="title-line">
             <h1>选好伙伴，准备出发。</h1>
             <p class="lede">
               {{ worlds[level.world].name }} · 第 {{ level.label }} 关 ·
@@ -1082,13 +1123,11 @@ onBeforeUnmount(() => {
         </section>
         <section class="difficulty-panel">
           <div class="difficulty-summary">
-            <div>
-              <h3>挑战设置</h3>
-              <p>
-                预计 {{ Math.round(previewSettings.duration / 60) }} 分钟 ·
-                {{ modeNames[save.data.options.difficulty] }} · 分阶段围攻
-              </p>
-            </div>
+            <strong class="difficulty-label">挑战设置</strong>
+            <p class="difficulty-meta">
+              预计 {{ Math.round(previewSettings.duration / 60) }} 分钟 ·
+              {{ modeNames[save.data.options.difficulty] }} · 分阶段围攻
+            </p>
             <select
               aria-label="难度"
               v-model="save.data.options.difficulty"
@@ -1186,53 +1225,100 @@ onBeforeUnmount(() => {
           </div>
         </section>
         <section class="shop-panel">
-          <div class="panel-heading">
-            <h3>庭院商店</h3>
-            <span>{{ save.data.coins }} 金币 · 消耗道具开局使用，扩容永久生效</span>
-          </div>
-          <div class="shop-grid">
-            <div v-for="item in shopItems" :key="item.id" class="shop-item">
-              <div class="shop-thumb">
-                <img
-                  v-if="item.img !== 'mower'"
-                  :src="pa(item.img)"
-                  :alt="item.name"
-                />
-                <span v-else class="mower-mini" aria-hidden="true"></span>
-              </div>
-              <strong
-                >{{ item.name
-                }}<em v-if="save.data.items[item.id]"
-                  >已持有 ×{{ save.data.items[item.id] }}</em
-                ></strong
+          <div class="shop-bar">
+            <div class="shop-lede">
+              <strong>庭院商店</strong>
+              <div
+                class="shop-wallet"
+                :class="{ 'can-buy': shopAffordable }"
+                aria-live="polite"
               >
-              <p>{{ item.desc }}</p>
+                <img :src="coinArt" alt="" /><b>{{ save.data.coins }}</b
+                ><small>金币</small>
+              </div>
+            </div>
+            <div class="shop-chips">
               <button
-                class="plain"
+                v-for="item in shopItems"
+                :key="item.id"
+                class="shop-chip"
+                :class="{
+                  owned: !!save.data.items[item.id],
+                  bought: boughtPulse === item.id,
+                  short: save.data.coins < item.price,
+                }"
                 :disabled="save.data.coins < item.price"
+                :title="item.name + '：' + item.desc"
                 @click="buy(item)"
               >
-                {{ item.price }} 金币
-              </button>
-            </div>
-            <div class="shop-item seed-slot">
-              <div class="shop-thumb">
-                <span class="slot-mini" aria-hidden="true">
-                  <i></i><i></i><i></i>
+                <span class="chip-thumb">
+                  <img
+                    v-if="item.img !== 'mower'"
+                    :src="pa(item.img)"
+                    :alt="item.name"
+                  />
+                  <span v-else class="mower-mini" aria-hidden="true"></span>
                 </span>
-              </div>
-              <strong
-                >种子袋扩容<em v-if="save.data.seedSlots"
-                  >已扩容 +{{ save.data.seedSlots }}</em
-                ></strong
-              >
-              <p>永久增加 1 个卡槽。当前 {{ slots }} / 10。</p>
+                <span class="chip-copy">
+                  <strong
+                    >{{ item.name
+                    }}<em v-if="save.data.items[item.id]"
+                      >×{{ save.data.items[item.id] }}</em
+                    ></strong
+                  >
+                  <span class="chip-price"
+                    ><img :src="coinArt" alt="" />{{ item.price }}</span
+                  >
+                </span>
+                <span v-if="save.data.coins < item.price" class="chip-lack"
+                  >还差 {{ item.price - save.data.coins }}</span
+                >
+              </button>
+
               <button
-                class="plain"
-                :disabled="save.data.coins < seedSlotPrice || seedSlotsFull"
+                class="shop-chip seed"
+                :class="{
+                  full: seedSlotsFull,
+                  bought: boughtPulse === 'seed-slot',
+                  short: !seedSlotsFull && save.data.coins < seedSlotPrice,
+                }"
+                :disabled="!seedSlotsFull && save.data.coins < seedSlotPrice"
+                :title="
+                  '种子袋扩容：永久增加 1 个卡槽，从 ' +
+                  BASE_SEED_SLOTS +
+                  ' 扩到 ' +
+                  MAX_SEED_SLOTS +
+                  '。当前 ' +
+                  slots +
+                  '/' +
+                  MAX_SEED_SLOTS +
+                  '。'
+                "
                 @click="buySeedSlot"
               >
-                {{ seedSlotPrice }} 金币
+                <span class="chip-thumb">
+                  <span class="slot-pips" aria-hidden="true">
+                    <i
+                      v-for="i in MAX_SEED_SLOTS"
+                      :key="i"
+                      :class="{ on: i <= slots }"
+                    ></i>
+                  </span>
+                </span>
+                <span class="chip-copy">
+                  <strong>种子袋 {{ slots }}/{{ MAX_SEED_SLOTS }}</strong>
+                  <span v-if="seedSlotsFull" class="chip-price full"
+                    >★ 已满级</span
+                  >
+                  <span v-else class="chip-price"
+                    ><img :src="coinArt" alt="" />{{ seedSlotPrice }}</span
+                  >
+                </span>
+                <span
+                  v-if="!seedSlotsFull && save.data.coins < seedSlotPrice"
+                  class="chip-lack"
+                  >还差 {{ seedSlotPrice - save.data.coins }}</span
+                >
               </button>
             </div>
           </div>
@@ -1326,7 +1412,7 @@ onBeforeUnmount(() => {
               {{ dailyMode ? "每日挑战" : `第 ${level.label} 关` }}
               <small>{{
                 dailyMode
-                  ? "种子 " + daily.date
+                  ? "种子 " + daily.date + (dailySalt ? " · 换一局" : "")
                   : level.mode === "normal"
                     ? "庭院防线"
                     : battleLevel.mode === "boss"
@@ -1334,15 +1420,40 @@ onBeforeUnmount(() => {
                       : "特别挑战"
               }}</small>
             </h2>
+            <p v-if="dailyMode && daily.mods.length" class="daily-mods">
+              <span v-for="mod in daily.mods" :key="mod.id" :title="mod.desc">{{
+                mod.name
+              }}</span>
+            </p>
           </div>
           <div class="game-controls">
             <button class="plain" @click="sound">
-              {{ save.data.sound ? "音效：开" : "音效：关" }}</button
+              <img
+                class="ctl-icon"
+                :src="uiIcon(save.data.sound ? 'sound-on' : 'sound-off')"
+                alt=""
+              />音效：{{ save.data.sound ? "开" : "关" }}</button
             ><button class="plain" @click="speed">
-              速度：{{ engine?.timeScale === 2 ? "2x" : "1x" }}</button
-            ><button class="plain" @click="fullscreen">全屏</button
+              <span class="ctl-ico ctl-speed" aria-hidden="true"
+                ><i></i><i></i></span
+              >速度：{{ engine?.timeScale === 2 ? "2x" : "1x" }}</button
+            ><button class="plain" @click="fullscreen">
+              <img
+                class="ctl-icon"
+                :src="uiIcon('exit-fullscreen')"
+                alt=""
+              />全屏</button
+            ><button v-if="dailyMode" class="plain" @click="rerollDaily">
+              <img class="ctl-icon" :src="uiIcon('restart')" alt="" />换一局</button
             ><button class="plain" @click="pause">
-              {{ stats.paused ? "继续游戏" : "暂停游戏" }}
+              <img
+                v-if="stats.paused"
+                class="ctl-icon"
+                :src="uiIcon('resume')"
+                alt=""
+              /><span v-else class="ctl-ico ctl-pause" aria-hidden="true"
+                ><i></i><i></i></span
+              >{{ stats.paused ? "继续游戏" : "暂停游戏" }}
             </button>
           </div>
         </section>
@@ -1360,7 +1471,7 @@ onBeforeUnmount(() => {
             aria-label="战斗菜单"
             @click="pause"
           >
-            ☰
+            <img class="menu-icon" :src="uiIcon('menu')" alt="" />
           </button>
           <div class="seed-tray">
             <div class="sun-counter">
@@ -1368,7 +1479,7 @@ onBeforeUnmount(() => {
               ><strong :key="'sun-' + stats.sun" class="resource-count">{{ engine?.isBelt ? "传送带" : stats.sun }}</strong
               ><small>{{ engine?.isBelt ? "免费种植" : "阳光储备" }}</small>
             </div>
-            <div class="sun-counter coin-counter" title="本局收集的金币">
+            <div v-if="!dailyMode" class="sun-counter coin-counter" title="本局收集的金币">
               <span class="coin-icon"></span
               ><strong :key="'coins-' + stats.coins" class="resource-count">{{ stats.coins }}</strong
               ><small>金币</small>
@@ -1421,19 +1532,15 @@ onBeforeUnmount(() => {
               :class="{ selected: stats.selected === 'shovel' }"
               @click="selectSeed('shovel')"
             >
-              <span class="shovel-icon" aria-hidden="true">♠</span
-              ><span>铲子</span>
+              <img class="shovel-icon" :src="uiIcon('shovel')" alt="" />
+              <span>铲子</span>
             </button>
             <button v-if="engine?.toolsUnlocked" class="garden-tool" :class="{ selected: stats.selected === 'tool' }"
               :aria-pressed="stats.selected === 'tool'" :disabled="stats.toolUses === 0 || stats.paused"
               :title="stats.toolHint" @click="useGardenTool">
+              <img class="tool-icon" :src="uiIcon('transplant')" alt="" />
               <span>{{ stats.selected === 'tool' ? '取消' : engine.toolName }}</span><strong>{{ stats.toolUses }} / 3</strong><small>T · 工具</small>
             </button>
-          </div>
-          <div v-if="engine?.toolsUnlocked" class="mechanic-strip">
-            <span v-if="stats.fogSeconds > 0" class="fog-timer">清雾剩余 {{ stats.fogSeconds }} 秒</span>
-            <span>{{ stats.selected === 'tool' ? stats.toolHint : engine?.level.mode === 'whack' ? '先冰后电 · Q / E 切锤' : '冰电爆发 ' + stats.reactions + ' 次 · T 使用工具' }}</span>
-            <button v-if="lesson" @click="showLesson">玩法说明</button>
           </div>
           <div class="canvas-wrap">
             <div v-if="stats.fogSeconds > 0" class="fog-clear-badge">清雾 {{ stats.fogSeconds }} 秒</div>
@@ -1478,14 +1585,36 @@ onBeforeUnmount(() => {
                 <h2>庭院，等你回来。</h2>
                 <p>植物和僵尸都暂停了，放心休息一下。</p>
                 <button v-if="full" class="plain" @click="sound">
-                  {{ save.data.sound ? "关闭声音" : "打开声音" }}
+                  <img
+                    class="btn-icon"
+                    :src="uiIcon(save.data.sound ? 'sound-on' : 'sound-off')"
+                    alt=""
+                  />
+                  <span class="btn-label">{{
+                    save.data.sound ? "关闭声音" : "打开声音"
+                  }}</span>
                 </button>
                 <button v-if="full" class="plain" @click="exitBattleFullscreen">
-                  退出全屏
+                  <img
+                    class="btn-icon"
+                    :src="uiIcon('exit-fullscreen')"
+                    alt=""
+                  />
+                  <span class="btn-label">退出全屏</span>
                 </button>
-                <button class="primary" @click="pause">继续守护 →</button
-                ><button class="plain" @click="start">重新开始本关</button
-                ><button class="text-button" @click="home">返回主菜单</button>
+                <button class="primary" @click="pause">
+                  <img class="btn-icon" :src="uiIcon('resume')" alt="" />
+                  <span class="btn-label">继续守护</span>
+                  <span class="btn-arrow" aria-hidden="true">→</span>
+                </button>
+                <button class="plain" @click="start">
+                  <img class="btn-icon" :src="uiIcon('restart')" alt="" />
+                  <span class="btn-label">重新开始本关</span>
+                </button>
+                <button class="text-button" @click="home">
+                  <img class="btn-icon" :src="uiIcon('home')" alt="" />
+                  <span class="btn-label">返回主菜单</span>
+                </button>
               </div>
             </div>
             <div v-if="result" class="game-overlay">
@@ -1507,12 +1636,17 @@ onBeforeUnmount(() => {
                   {{
                     result === "won"
                       ? dailyMode
-                        ? "今日挑战完成，明天再来。"
+                        ? dailyOfficial
+                          ? "今日挑战完成，最佳成绩已记录。"
+                          : "换一局挑战完成，不计入官方最佳。"
                         : engine?.settings.difficulty === "custom"
                           ? "自定义挑战成绩已保存，不影响冒险解锁。"
                           : "通关进度已保存，下一段冒险在等你。"
                       : loseTip
                   }}
+                </p>
+                <p v-if="dailyMode && daily.mods.length" class="daily-mods">
+                  今日条件：{{ daily.mods.map((m) => m.name).join("、") }}
                 </p>
                 <p v-if="result === 'won' && resultStars" class="result-stars">
                   {{ "★".repeat(resultStars) }}{{ "☆".repeat(3 - resultStars) }}
@@ -1539,7 +1673,7 @@ onBeforeUnmount(() => {
                 >
                   解锁成就：{{ name }}
                 </p>
-                <div v-if="result === 'lost'" class="difficulty-switch">
+                <div v-if="result === 'lost' && !dailyMode" class="difficulty-switch">
                   <span
                     >{{
                       (save.data.lossStreak[levelId] ?? 0) >= 2
@@ -1562,7 +1696,7 @@ onBeforeUnmount(() => {
                     {{ modeNames[d] }}
                   </button>
                 </div>
-                <p v-if="engine?.coins" class="coin-earned">
+                <p v-if="engine?.coins && !dailyMode" class="coin-earned">
                   本局收集金币 +{{ engine.coins }}
                 </p>
                 <button
@@ -1584,6 +1718,8 @@ onBeforeUnmount(() => {
                       ? "前往下一关 →"
                       : "重新挑战 →"
                   }}</button
+                ><button v-if="dailyMode" class="text-button" @click="rerollDaily">
+                  换一局</button
                 ><button class="text-button" @click="home">返回庭院</button>
               </div>
             </div>

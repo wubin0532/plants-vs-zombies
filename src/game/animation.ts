@@ -1,6 +1,7 @@
 import type Phaser from "phaser";
 import type { Zombie, Plant } from "./engine";
 import { motionZombieFrames, motionPlantFrames } from "./motion-manifest.generated";
+import { plantIdleRange } from "./idle-motion.generated";
 const vehicles = new Set(["zomboni", "bobsled", "catapult", "boss"]);
 const floats = new Set(["ducky", "snorkel", "dolphin", "balloon", "bungee"]);
 // Padding keeps swinging hands and feet inside their own atlas frame.
@@ -28,28 +29,53 @@ export const motionSheet = (id: string) =>
     : isMotionZombie(id)
       ? { frameWidth: bakedFrame.width, frameHeight: bakedFrame.height }
       : { frameWidth: 192, frameHeight: 256 };
+/**
+ * 待机换帧频率（帧/秒）：大嘴花最活跃；待机姿势幅度大的植物保持基准帧，
+ * 只靠渲染层的程序化呼吸，避免整片草坪非战斗时持续抖动。
+ * 幅度来自 plantIdleRange（由 prepare-cards 从动作图实测生成）。
+ */
+function idleFrameRate(id: string): number {
+  if (id === "chomper") return 2.8;
+  const range = plantIdleRange[id] ?? 0;
+  if (range > 12) return 0;
+  return +(1 + (1 - range / 12) * 0.9).toFixed(2);
+}
+/** 待机姿势：慢速循环，uid 错开相位，避免整片草坪同步摆动；休眠时完全静止。 */
+function idleFrame(p: Plant, count: number, rate: number): number {
+  if (rate <= 0 || p.sleep) return 0;
+  return Math.floor(p.age * rate + p.uid * 0.37) % count;
+}
 export function chomperFrame(p: Plant) {
   if (p.chomp) return 4 + Math.min(3, Math.floor((p.chomp.elapsed / 0.6) * 4));
   if (p.digest !== undefined && p.digest > 0)
     return 8 + (Math.floor(p.digest * 6) % 4);
   if (p.timer > 0 && p.timer <= 0.6)
     return 12 + Math.min(3, Math.floor(((0.6 - p.timer) / 0.6) * 4));
-  return Math.floor(p.age * 4) % 4;
+  // 大嘴花是招牌植物：待机也保持较快的咀嚼循环，是全场最活跃的一株。
+  return idleFrame(p, 4, idleFrameRate("chomper"));
 }
-/** 植物动作帧：8 帧组「触发 4-7 > 待机 0-3」，16 帧组「攻击 12-15 > 蓄力 8-11 > 待机 0-7」。 */
+/**
+ * 植物动作帧：8 帧组「触发 4-7 > 待机 0-3」，16 帧组「攻击 12-15 > 蓄力 8-11 > 待机 0-7」。
+ *
+ * 待机按 plantIdleRange 分档：姿势幅度小的植物小幅慢速循环，幅度大的
+ * （豌豆、西瓜、玉米炮等）保持基准帧、只做程序化呼吸。蓄力、攻击、受击和
+ * 产出永远优先——动作预算留给战斗，不同植物也因此有各自的待机节奏。
+ */
 export function plantMotionFrame(p: Plant) {
   const frames = motionPlantFrames[p.id] ?? 16;
   const attack = p.attackAge ?? 10;
   if (frames <= 8) {
     if (p.hurt && p.hurt > 0)
       return 4 + Math.min(3, Math.floor(Math.min(1, Math.max(0, 1 - p.hurt / 0.2)) * 4));
-    if (attack < 0.4) return 4 + Math.min(3, Math.floor((attack / 0.4) * 4));
-    return Math.floor(p.age * 6) % 4;
+    if (attack < 0.45) return 4 + Math.min(3, Math.floor((attack / 0.45) * 4));
+    return idleFrame(p, 4, idleFrameRate(p.id));
   }
-  if (attack < 0.4) return 12 + Math.min(3, Math.floor((attack / 0.4) * 4));
-  if (p.timer > 0 && p.timer < 0.35)
-    return 8 + Math.min(3, Math.floor(((0.35 - p.timer) / 0.35) * 4));
-  return Math.floor(p.age * 6) % 8;
+  if (attack < 0.45) return 12 + Math.min(3, Math.floor((attack / 0.45) * 4));
+  if (p.hurt && p.hurt > 0)
+    return 8 + Math.min(3, Math.floor(Math.min(1, Math.max(0, 1 - p.hurt / 0.2)) * 4));
+  if (p.timer > 0 && p.timer < 0.4)
+    return 8 + Math.min(3, Math.floor(((0.4 - p.timer) / 0.4) * 4));
+  return idleFrame(p, 8, idleFrameRate(p.id));
 }
 export function zombieAppearance(z: Zombie) {
   const id =
