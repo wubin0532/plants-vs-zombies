@@ -3588,3 +3588,33 @@ body.battle-fullscreen {
   .rotate-phone { animation: none; }
 }
 
+/* ==========================================================================
+   独立窗口（添加到主屏幕 / PWA）安全区
+   iOS / Android 从主屏幕启动时会铺满整屏，页面必须自己让开状态栏与 home 指示条；
+   Safari / Chrome 普通标签页里浏览器已经让开了，不额外加内边距。
+   ========================================================================== */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+}
+@media (display-mode: standalone), (display-mode: fullscreen), (display-mode: minimal-ui) {
+  .app-shell:not(.immersive) {
+    padding-top: var(--safe-top);
+    padding-right: max(5%, var(--safe-right));
+    padding-bottom: var(--safe-bottom);
+    padding-left: max(5%, var(--safe-left));
+  }
+  /* 顶栏吸顶：滚动浏览庭院时，导航与设置始终可点。 */
+  .app-shell:not(.immersive) .topbar {
+    position: sticky;
+    top: var(--safe-top);
+    z-index: 60;
+    background: #f5f3e9f2;
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+  }
+}
+
+
