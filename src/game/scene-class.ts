@@ -433,21 +433,28 @@ export class GardenScene extends Phaser.Scene {
       // setTexture does not reset all display state on every Phaser version.
       // Reset frame/crop/scale explicitly so the second selected card gets the
       // complete portrait instead of inheriting a clipped previous frame.
-      const isChomper = id === "chomper";
+      // 模仿者在场上是以被模仿植物的 id 存进 engine 的（engine.ts 用 d.id 种下），
+      // 所以预览也要显示被模仿的植物，而不是模仿者本体。
+      const displayId = id === "imitater" ? e.imitate || "pea" : id;
+      const isChomper = displayId === "chomper";
       // 保龄球关的冰/电滚球在场上用 b-ice / b-electric，预览要跟场上一致。
       const bowl =
-        e.level.mode === "bowling" && (id === "snowpea" || id === "arc")
-          ? "b-" + (id === "snowpea" ? "ice" : "electric")
+        e.level.mode === "bowling" &&
+        (displayId === "snowpea" || displayId === "arc")
+          ? "b-" + (displayId === "snowpea" ? "ice" : "electric")
           : "";
       this.ghost
-        .setTexture(bowl || (isChomper ? "chomper-motion" : id))
+        .setTexture(bowl || (isChomper ? "chomper-motion" : displayId))
         // 立绘纹理被程序加了 roots/head 具名帧，数字帧 0 不再是整张图，必须用
         // Phaser 的 __BASE；但 chomper 用的是 256×256 的精灵图，__BASE 是整张
         // 16 格图集，会显示成 4×4 共 16 个——所以精灵图要显式取单帧 0。
         .setFrame(isChomper ? 0 : "__BASE")
         .setCrop()
         .setOrigin(0.5, isChomper ? 249 / 256 : 0.95)
-        .setDisplaySize(86 * plantScale(id), 86 * plantScale(id))
+        .setDisplaySize(
+          86 * plantScale(displayId),
+          86 * plantScale(displayId),
+        )
         .setAlpha(0.82)
         .setPosition(this.x(col), feetY(row, e.level.rows))
         .setVisible(true);
