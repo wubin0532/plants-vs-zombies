@@ -58,7 +58,7 @@ describe("双发/机枪/香蒲真实连发", () => {
     e2.step(0.1);
     step(e2, 0.3);
     expect(e2.shots.filter((s) => s.type === "cattail")).toHaveLength(2);
-    expect(e2.shots.every((s) => s.damage === 20)).toBe(true);
+    expect(e2.shots.every((s) => s.damage === 25)).toBe(true);
   });
 
   it("前一目标死亡不吞掉后续弹丸：出膛时重新瞄准", () => {
@@ -182,13 +182,13 @@ describe("黄油规则", () => {
     const z = e.zombies.at(-1)!;
     e.step(0.1);
     expect(e.shots[0].type).toBe("butter");
-    expect(e.shots[0].damage).toBe(40);
+    expect(e.shots[0].damage).toBe(60);
     step(e, 3);
     expect(z.freeze).toBeGreaterThan(0);
-    expect(200 - z.hp).toBe(40);
+    expect(200 - z.hp).toBe(60);
   });
 
-  it("普通玉米粒不再命中时才随机，伤害 20 且不定身", () => {
+  it("普通玉米粒不再命中时才随机，伤害 30 且不定身", () => {
     const e = night();
     e.random = () => 0.9; // 不出黄油
     e.addPlant("kernel", 0, 2).timer = 0;
@@ -196,7 +196,7 @@ describe("黄油规则", () => {
     const z = e.zombies.at(-1)!;
     e.step(0.1);
     expect(e.shots[0].type).toBe("kernel");
-    expect(e.shots[0].damage).toBe(20);
+    expect(e.shots[0].damage).toBe(30);
     step(e, 3);
     expect(z.freeze).toBe(0);
   });

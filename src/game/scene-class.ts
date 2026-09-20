@@ -3,7 +3,7 @@ import { foggedAt, lanternsIn, torchesIn } from "./visibility";
 import { presentationAssets, presentationImage, projectileVisual, projectileHidden, plantAccent, plantBodyPose, plantIdlePose, zombieAccent, zombieVisualPose } from "./presentation";
 import Phaser from "phaser";
 import { plants, plantById, type Level } from "./content";
-import { assetUrl, plantImage, zombieImage, gardenImage, effectImage, bowlImage, mistImage, mowerImage, terrainImage, waterImage, tokenImage } from "./art";
+import { assetUrl, plantImage, zombieImage, gardenImage, effectImage, bowlImage, mistImage, mowerImage, terrainImage, waterImage, tokenImage, weatherImage, waterFramesImage, waterStripFramesImage } from "./art";
 import { BOARD, cellX, cellY, feetY, cellAt, healthFraction } from "./layout";
 import {
   bakeZombie,
@@ -21,7 +21,7 @@ import {
   zombiePose,
 } from "./animation";
 import { plantScale, zombieScale } from "./proportions";
-import { tokenPose, weatherOpacity, WIND_DURATION } from "./ambient";
+import { tokenPose, weatherOpacity, WIND_DURATION, OVERCAST_DURATION, BLAZING_DURATION, BLACKOUT_DURATION } from "./ambient";
 import { drawWeather } from "./ambient-render";
 import type { GardenAudio } from "./audio";
 export type RenderOptions = {
@@ -161,6 +161,17 @@ export class GardenScene extends Phaser.Scene {
   terrainCache!: Phaser.GameObjects.RenderTexture;
   waterBase!: Phaser.GameObjects.Image;
   waterRipple!: Phaser.GameObjects.TileSprite;
+  weatherCloud!: Phaser.GameObjects.TileSprite;
+  weatherRain!: Phaser.GameObjects.TileSprite;
+  cloudShadow!: Phaser.GameObjects.TileSprite;
+  caustics!: Phaser.GameObjects.TileSprite;
+  waterSplash!: Phaser.GameObjects.TileSprite;
+  rainSplash!: Phaser.GameObjects.TileSprite;
+  windLeaves!: Phaser.GameObjects.TileSprite;
+  frostLayer!: Phaser.GameObjects.TileSprite;
+  heatLayer!: Phaser.GameObjects.TileSprite;
+  sunFlare!: Phaser.GameObjects.Image;
+  blackout!: Phaser.GameObjects.Image;
   terrainKey = "";
   keep = new Set<string>();
   hover!: Phaser.GameObjects.Rectangle;
@@ -191,6 +202,16 @@ export class GardenScene extends Phaser.Scene {
       this.load.image("terrain-" + kind, terrainImage(kind));
     for (const kind of ["water-strip", "water-ripple"] as const)
       this.load.image(kind, waterImage(kind));
+    // 泳池水帧动画（4×512×128），以及阴天云与雨幕贴图。
+    this.load.spritesheet("water-frames", waterFramesImage(), { frameWidth: 512, frameHeight: 128 });
+    this.load.image("overcast-cloud", mistImage("overcast-cloud"));
+    this.load.image("rain-streak", weatherImage("rain-streak"));
+    this.load.spritesheet("water-strip-frames", waterStripFramesImage(), { frameWidth: 891, frameHeight: 168 });
+    this.load.spritesheet("rain-splash", weatherImage("rain-splash"), { frameWidth: 128, frameHeight: 128 });
+    this.load.spritesheet("water-splash", weatherImage("water-splash"), { frameWidth: 128, frameHeight: 128 });
+    this.load.spritesheet("wind-leaves", weatherImage("wind-leaves"), { frameWidth: 128, frameHeight: 128 });
+    for (const kind of ["heat-shimmer", "cloud-shadow", "frost", "water-caustics", "blackout-glow", "sun-flare", "snow-tile", "eclipse-mask"] as const)
+      this.load.image("wx-" + kind, weatherImage(kind));
     for (const kind of ["token-sun", "token-coin"] as const)
       this.load.image(kind, tokenImage(kind));
     for (const id of presentationAssets) this.load.image("art-" + id, presentationImage(id));
@@ -247,16 +268,56 @@ export class GardenScene extends Phaser.Scene {
     const waterTop = BOARD.top + BOARD.lawnHeight / 3;
     const waterW = BOARD.cell * 9, waterH = BOARD.lawnHeight / 3;
     this.waterBase = this.add
-      .image(BOARD.left, waterTop, "water-strip")
+      .image(BOARD.left, waterTop, this.textures.exists("water-strip-frames") ? "water-strip-frames" : "water-strip")
       .setOrigin(0, 0)
       .setDisplaySize(waterW, waterH)
       .setDepth(0.28)
       .setVisible(false);
     this.waterRipple = this.add
-      .tileSprite(BOARD.left, waterTop, waterW, waterH, "water-ripple")
+      .tileSprite(
+        BOARD.left,
+        waterTop,
+        waterW,
+        waterH,
+        this.textures.exists("water-frames") ? "water-frames" : "water-ripple",
+      )
       .setOrigin(0, 0)
       .setDepth(0.32)
       .setVisible(false);
+    // 阴天云层压在迷雾之下（迷雾仍然可读），雨幕压在天气图形之上。
+    this.weatherCloud = this.add
+      .tileSprite(0, 0, 1200, 690, "overcast-cloud")
+      .setOrigin(0, 0)
+      .setDepth(99.5)
+      .setVisible(false)
+      .setTint(0x93a3b8);
+    this.weatherRain = this.add
+      .tileSprite(BOARD.left, BOARD.top, BOARD.cell * 9, BOARD.lawnHeight, "rain-streak")
+      .setOrigin(0, 0)
+      .setDepth(100.6)
+      .setVisible(false);
+    const boardW = BOARD.cell * 9, boardH = BOARD.lawnHeight;
+    const waterTopY = BOARD.top + boardH / 3, waterBandH = boardH / 3;
+    // 白天云影 / 池水焦散 / 落水水花（地面层）
+    this.cloudShadow = this.add.tileSprite(BOARD.left, BOARD.top, boardW, boardH, "wx-cloud-shadow")
+      .setOrigin(0, 0).setDepth(100.2).setVisible(false).setAlpha(.12);
+    this.caustics = this.add.tileSprite(BOARD.left, waterTopY, boardW, waterBandH, "wx-water-caustics")
+      .setOrigin(0, 0).setDepth(0.33).setVisible(false);
+    this.waterSplash = this.add.tileSprite(BOARD.left, waterTopY, boardW, waterBandH, "water-splash")
+      .setOrigin(0, 0).setDepth(0.34).setVisible(false);
+    // 天气层（棋盘之上）
+    this.rainSplash = this.add.tileSprite(BOARD.left, BOARD.top, boardW, boardH, "rain-splash")
+      .setOrigin(0, 0).setDepth(100.65).setVisible(false);
+    this.windLeaves = this.add.tileSprite(BOARD.left, BOARD.top, boardW, boardH, "wind-leaves")
+      .setOrigin(0, 0).setDepth(100.68).setVisible(false);
+    this.heatLayer = this.add.tileSprite(BOARD.left, BOARD.top, boardW, boardH, "wx-heat-shimmer")
+      .setOrigin(0, 0).setDepth(100.7).setVisible(false);
+    this.frostLayer = this.add.tileSprite(BOARD.left, BOARD.top, boardW, boardH, "wx-frost")
+      .setOrigin(0, 0).setDepth(100.7).setVisible(false);
+    this.sunFlare = this.add.image(BOARD.left + boardW * 0.8, BOARD.top + boardH * 0.2, "wx-sun-flare")
+      .setDepth(100.9).setVisible(false);
+    this.blackout = this.add.image(600, 345, "wx-blackout-glow")
+      .setDepth(102).setVisible(false).setDisplaySize(1200, 690);
     for (const id of ["cone", "bucket"]) {
       const texture = this.textures.createCanvas("armor-" + id, 160, 80)!;
       texture.context.drawImage(
@@ -553,7 +614,8 @@ export class GardenScene extends Phaser.Scene {
     const torches = torchesIn(e);
     this.drawWaterAndLight(lights);
 
-    drawWeather(this.weather, e.time, e.windUntil, e.rainUntil, this.options.quality?.() || "high");
+    drawWeather(this.weather, e.time, e.windUntil, e.rainUntil, e.overcastUntil, e.blazingUntil, this.options.quality?.() || "high");
+    this.updateWeatherLayers(e);
     const terrainKey = e.tiles.map(t => `${t.type}:${t.row}:${t.col}`).join("|");
     if (terrainKey !== this.terrainKey) {
       this.terrainKey = terrainKey;
@@ -1167,6 +1229,73 @@ export class GardenScene extends Phaser.Scene {
       if (!keep.has("z" + uid)) this.previous.delete(uid);
     this.mist.update(e, this.options.quality?.() || "high");
   }
+  /** 天气贴图层：透明度由各天气时段渐入渐出，位置只由时间推导，不消耗游戏随机数。 */
+  updateWeatherLayers(e: Engine) {
+    const t = e.time;
+    const ov = weatherOpacity(t, e.overcastUntil, OVERCAST_DURATION);
+    const cold = weatherOpacity(t, e.windUntil, WIND_DURATION);
+    const blaze = weatherOpacity(t, e.blazingUntil, BLAZING_DURATION);
+    const dark = weatherOpacity(t, e.blackoutUntil, BLACKOUT_DURATION);
+    // 阴天：云层 + 雨幕 + 地面水花
+    this.weatherCloud.setVisible(ov > 0);
+    this.weatherRain.setVisible(ov > 0);
+    this.rainSplash.setVisible(ov > 0);
+    if (ov > 0) {
+      this.weatherCloud.setAlpha(.5 * ov);
+      this.weatherCloud.tilePositionX = t * 5;
+      this.weatherCloud.tilePositionY = Math.sin(t * .4) * 6;
+      this.weatherRain.setAlpha(.8 * ov);
+      this.weatherRain.tilePositionX = t * 46;
+      this.weatherRain.tilePositionY = t * 340;
+      this.rainSplash.setAlpha(.32 * ov);
+      this.rainSplash.setFrame(Math.floor(t * 10) % 4);
+      this.rainSplash.tilePositionX = t * 9;
+    }
+    // 寒风：落叶 + 霜晶
+    this.windLeaves.setVisible(cold > 0);
+    this.frostLayer.setVisible(cold > 0);
+    if (cold > 0) {
+      this.windLeaves.setAlpha(.55 * cold);
+      this.windLeaves.setFrame(Math.floor(t * 8) % 6);
+      this.windLeaves.tilePositionX = t * 90;
+      this.windLeaves.tilePositionY = Math.sin(t * 1.2) * 6;
+      this.frostLayer.setAlpha(.6 * cold);
+      this.frostLayer.tilePositionX = t * 28;
+      this.frostLayer.tilePositionY = t * 68;
+    }
+    // 烈日：热浪 + 光晕
+    this.heatLayer.setVisible(blaze > 0);
+    this.sunFlare.setVisible(blaze > 0);
+    if (blaze > 0) {
+      this.heatLayer.setAlpha(.3 * blaze);
+      this.heatLayer.tilePositionY = -t * 40;
+      this.sunFlare.setAlpha((.45 + Math.sin(t * 2) * .1) * blaze);
+    }
+    // 停电：暗角
+    this.blackout.setVisible(dark > 0);
+    if (dark > 0) this.blackout.setAlpha(.72 * dark);
+    // 白天常驻云影
+    const day = ["day", "pool", "roof"].includes(e.level.scene);
+    this.cloudShadow.setVisible(day);
+    if (day) {
+      this.cloudShadow.tilePositionX = t * 7;
+      this.cloudShadow.tilePositionY = t * 2;
+    }
+    // 泳池/迷雾：池壁焦散 + 落水水花
+    const wet = e.level.scene === "pool" || e.level.scene === "fog";
+    this.caustics.setVisible(wet);
+    // 落水水花只在阴天降雨时出现，避免常驻的重复花纹。
+    this.waterSplash.setVisible(wet && ov > 0);
+    if (wet) {
+      this.caustics.setAlpha(.26 + Math.sin(t * .9) * .05);
+      this.caustics.tilePositionX = t * 12;
+      this.caustics.tilePositionY = Math.sin(t * .7) * 4;
+      if (ov > 0) {
+        this.waterSplash.setAlpha(.5 * ov);
+        this.waterSplash.setFrame(Math.floor(t * 5) % 4);
+      }
+    }
+  }
   drawWaterAndLight(lights: ReturnType<typeof lanternsIn>) {
     const g = this.waterSurface, e = this.engine;
     g.clear();
@@ -1176,9 +1305,15 @@ export class GardenScene extends Phaser.Scene {
     if (!wet) return;
     const quality = this.options.quality?.() || "high";
     // 水面：半透明贴图叠加在背景美术之上，波纹用 tileSprite 滚动。
-    this.waterBase.setAlpha(quality === "low" ? .7 : 1);
+    this.waterBase.setAlpha((quality === "low" ? .7 : 1) * (.94 + Math.sin(e.time * 1.1) * .06));
+    // 泳池水动画：底色 4 帧循环 + 轻微起伏；暂停时 e.time 冻结，动画随之一并停住。
+    if (this.waterBase.texture.key === "water-strip-frames")
+      this.waterBase.setFrame(Math.floor(e.time * 6) % 4);
+    this.waterBase.y = BOARD.top + BOARD.lawnHeight / 3 + Math.sin(e.time * .7) * 1.6;
     // 波纹放大平铺尺寸并压低透明度，避免出现可辨认的重复图案
     this.waterRipple.setTileScale(1.8, 1.8);
+    if (this.waterRipple.texture.key === "water-frames")
+      this.waterRipple.setFrame(Math.floor(e.time * 8) % 4);
     this.waterRipple.setAlpha(quality === "low" ? .16 : quality === "medium" ? .22 : .3);
     this.waterRipple.tilePositionX = e.time * 16;
     this.waterRipple.tilePositionY = Math.sin(e.time * .8) * 3;

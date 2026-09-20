@@ -38,6 +38,7 @@ assets-source/*
 !assets-source/plants.webp
 !assets-source/zombies.webp
 PVZ重绘/
+img1/
 
 # Generated offline audio exports; the soundtrack is synthesized at runtime in WebAudio
 # (see scripts/export-audio-playwright.js -> output/pvz-audio.zip)

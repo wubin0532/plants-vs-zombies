@@ -19,8 +19,15 @@ export const gardenImage = (scene = "day") =>
   assetUrl(`assets/backgrounds/${scene}.webp`);
 
 /** 云雾贴图：AI 出图直接覆盖同名文件即可，无需改代码。 */
-export const mistImage = (id: "mist-a" | "mist-b" | "mist-c" | "glow-lantern") =>
+export const mistImage = (id: "mist-a" | "mist-b" | "mist-c" | "glow-lantern" | "overcast-cloud") =>
   assetUrl(`assets/mist/${id}.webp`);
+/** 天气特效贴图（阴天雨幕），AI 出图直接覆盖同名文件，代码无需改动。 */
+export const weatherImage = (kind: "rain-streak" | "rain-splash" | "water-splash" | "wind-leaves" | "icon-weather" | "heat-shimmer" | "cloud-shadow" | "frost" | "snow-tile" | "blackout-glow" | "sun-flare" | "eclipse-mask" | "water-caustics") =>
+  assetUrl(`assets/weather/${kind}.webp`);
+/** 泳池波纹帧：4 帧横向序列，每帧 512×128，可平铺。 */
+export const waterFramesImage = () => assetUrl("assets/water/water-frames.webp");
+/** 泳池底色帧：4 帧横向序列，每帧 891×168。 */
+export const waterStripFramesImage = () => assetUrl("assets/water/water-strip-frames.webp");
 
 /** 道具类贴图（小推车、地形、水面、token）：AI 出图直接覆盖同名文件。 */
 export const mowerImage = () => assetUrl("assets/mower.png");
@@ -46,6 +53,12 @@ export type UiIconName =
   | "menu"
   | "sound-on"
   | "sound-off"
-  | "exit-fullscreen";
+  | "exit-fullscreen"
+  | "speed"
+  | "pause"
+  | "fullscreen";
 export const uiIcon = (name: UiIconName) =>
   assetUrl(`assets/icons/ui-${name}.webp`);
+/** 单色剪影图标：供 CSS mask 使用，可随按钮文字色自动变色。 */
+export const uiIconMono = (name: "speed" | "pause" | "fullscreen") =>
+  assetUrl(`assets/icons/ui-${name}-mono.webp`);

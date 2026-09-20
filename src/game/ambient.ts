@@ -3,6 +3,9 @@ import { BOARD, cellX, cellY } from "./layout";
 
 export const WIND_DURATION = 8;
 export const RAIN_DURATION = 10;
+export const OVERCAST_DURATION = 8;
+export const BLAZING_DURATION = 12;
+export const BLACKOUT_DURATION = 6;
 export const TOKEN_LIFETIME = 16;
 const clamp = (n: number) => Math.max(0, Math.min(1, n));
 const smooth = (n: number) => { const t = clamp(n); return t * t * (3 - 2 * t); };

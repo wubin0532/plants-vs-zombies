@@ -28,6 +28,8 @@ import {
   bowlImage,
   tokenImage,
   uiIcon,
+  uiIconMono,
+  assetUrl,
 } from "./game/art";
 import { battleSettings, defaultOptions } from "./game/difficulty";
 import { applyDailyMods, dailyChallenge } from "./game/daily";
@@ -47,6 +49,12 @@ import {
 import { useAuth } from "./auth";
 const save = useSave();
 const auth = useAuth();
+const weatherIcon = assetUrl("assets/weather/icon-weather.webp");
+// 单色图标走 CSS mask：背景用 currentColor，颜色自动跟随按钮文字。
+const monoIcon = (name: "speed" | "pause" | "fullscreen"): Record<string, string> => ({
+  maskImage: `url(${uiIconMono(name)})`,
+  WebkitMaskImage: `url(${uiIconMono(name)})`,
+});
 save.load();
 {
   const fresh = checkAchievements(save.data);
@@ -102,6 +110,7 @@ const allowPortraitPlay = ref(false);
 const standalone = ref(false);
 const installTip = ref(false);
 const isPortrait = computed(() => viewport.value.h > viewport.value.w);
+const isLandscape = computed(() => viewport.value.w > viewport.value.h);
 const isPhone = computed(
   () => Math.min(viewport.value.w, viewport.value.h) <= 620,
 );
@@ -134,6 +143,15 @@ watch(portraitGate, (active) => {
     e.paused = false;
     gatePaused = false;
   }
+});
+// 手机横屏时自动进入战斗全屏；用户主动退出后，本次横屏不再自动进入，
+// 直到方向翻转或开新一局才重新启用。
+let autoFullscreenSuppressed = false;
+watch([viewport, page], () => {
+  if (autoFullscreenSuppressed || full.value) return;
+  if (page.value !== "game" || !touchDevice || !isPhone.value) return;
+  if (!isLandscape.value) return;
+  void enterBattleFullscreen(false);
 });
 const isIOS =
   /iP(hone|ad|od)/.test(navigator.userAgent) ||
@@ -263,8 +281,20 @@ const stats = computed(() => {
     hammer: e?.hammer ?? "ice",
     reactions: e?.reactions ?? 0,
     fogSeconds: e?.level.scene === "fog" && e.level.mode !== "vases" ? Math.ceil(e.fogClear) : 0,
-    weather: e && e.windUntil > e.time ? "寒风" : e && e.rainUntil > e.time ? "阳光雨" : "",
-    weatherSeconds: e ? Math.ceil(Math.max(e.windUntil, e.rainUntil) - e.time) : 0,
+    ...(() => {
+      if (!e) return { weather: "", weatherFrame: 0, weatherHint: "", weatherSeconds: 0 };
+      const list = [
+        { until: e.rainUntil, name: "阳光雨", frame: 0, hint: "阳光加速" },
+        { until: e.windUntil, name: "寒风", frame: 1, hint: "全场减速" },
+        { until: e.overcastUntil, name: "阴天", frame: 2, hint: "产阳光变慢" },
+        { until: e.blazingUntil, name: "烈日", frame: 3, hint: "阳光更快·僵尸躁动" },
+        { until: e.blackoutUntil, name: "停电", frame: 4, hint: "产阳光停摆" },
+      ];
+      const active = list.filter((w) => w.until > e.time).sort((a, b) => b.until - a.until)[0];
+      return active
+        ? { weather: active.name, weatherFrame: active.frame, weatherHint: active.hint, weatherSeconds: Math.ceil(active.until - e.time) }
+        : { weather: "", weatherFrame: 0, weatherHint: "", weatherSeconds: 0 };
+    })(),
     sun: e?.sun || 0,
     selected: e?.selected || "",
     paused: e?.paused || false,
@@ -528,6 +558,8 @@ async function start() {
   starting = true;
   allowPortraitPlay.value = false;
   gatePaused = false;
+  // 新一局重新启用“横屏自动全屏”。
+  autoFullscreenSuppressed = false;
   dailyOfficial.value = dailySalt.value === 0;
   bootError.value = "";
   const generation = ++gameGeneration;
@@ -860,6 +892,8 @@ function sound() {
 async function exitBattleFullscreen() {
   full.value = false;
   installTip.value = false;
+  // 记录这是主动退出，避免“横屏自动全屏”立刻又把全屏打开。
+  autoFullscreenSuppressed = true;
   if (document.fullscreenElement)
     await document.exitFullscreen().catch(() => {});
   try {
@@ -869,11 +903,9 @@ async function exitBattleFullscreen() {
   }
   syncViewport();
 }
-async function fullscreen() {
-  if (full.value) {
-    await exitBattleFullscreen();
-    return;
-  }
+/** 进入战斗全屏：先切沉浸布局，再尝试原生全屏与方向锁定。 */
+async function enterBattleFullscreen(byGesture: boolean) {
+  if (full.value) return;
   full.value = true;
   await nextTick();
   let native = false;
@@ -894,9 +926,16 @@ async function fullscreen() {
   } catch {
     /* Manual landscape remains supported. */
   }
-  // iPhone Safari 不支持网页元素全屏：引导“添加到主屏幕”，从桌面图标启动才是无地址栏的真全屏。
-  if (!native && isIOS && !standalone.value) installTip.value = true;
+  // iPhone Safari 不支持网页元素全屏：仅在用户主动点全屏时引导“添加到主屏幕”。
+  if (byGesture && !native && isIOS && !standalone.value) installTip.value = true;
   syncViewport();
+}
+async function fullscreen() {
+  if (full.value) {
+    await exitBattleFullscreen();
+    return;
+  }
+  await enterBattleFullscreen(true);
 }
 /** 旋转引导里的“尝试全屏 / 旋转”：只请求，不因已在沉浸模式就把全屏关掉。 */
 async function tryRotate() {
@@ -927,11 +966,16 @@ function fullscreenChanged() {
 }
 /** iOS 旋转、地址栏收放后布局会晚一拍，延迟通知 Phaser 重算画布。 */
 function syncViewport() {
+  const wasLandscape = isLandscape.value;
   viewport.value = { w: window.innerWidth, h: window.innerHeight };
+  // 方向真正翻转时，重新允许“横屏自动全屏”。
+  if (isLandscape.value !== wasLandscape) autoFullscreenSuppressed = false;
   window.clearTimeout(viewportTimer);
   viewportTimer = window.setTimeout(refreshBoardScale, 250);
 }
 function refreshBoardScale() {
+  // iOS 旋转/地址栏收放后尺寸会晚一拍，这里再取一次真实视口。
+  viewport.value = { w: window.innerWidth, h: window.innerHeight };
   window.dispatchEvent(new Event("resize"));
   game?.scale?.refresh?.();
   updateBoardVars();
@@ -1610,26 +1654,29 @@ onBeforeUnmount(() => {
                 alt=""
               />音效：{{ save.data.sound ? "开" : "关" }}</button
             ><button class="plain" @click="speed">
-              <span class="ctl-ico ctl-speed" aria-hidden="true"
-                ><i></i><i></i></span
-              >速度：{{ engine?.timeScale === 2 ? "2x" : "1x" }}</button
+              <span class="ctl-icon mask-icon" :style="monoIcon('speed')" aria-hidden="true"></span>速度：{{
+                engine?.timeScale === 2 ? "2x" : "1x"
+              }}</button
             ><button class="plain" @click="fullscreen">
-              <img
-                class="ctl-icon"
-                :src="uiIcon('exit-fullscreen')"
-                alt=""
-              />全屏</button
+              <span
+                v-if="!full"
+                class="ctl-icon mask-icon"
+                :style="monoIcon('fullscreen')"
+                aria-hidden="true"
+              ></span
+              ><img v-else class="ctl-icon" :src="uiIcon('exit-fullscreen')" alt="" />全屏</button
             ><button v-if="dailyMode" class="plain" @click="rerollDaily">
               <img class="ctl-icon" :src="uiIcon('restart')" alt="" />换一局</button
             ><button class="plain" @click="pause">
-              <img
-                v-if="stats.paused"
-                class="ctl-icon"
-                :src="uiIcon('resume')"
-                alt=""
-              /><span v-else class="ctl-ico ctl-pause" aria-hidden="true"
-                ><i></i><i></i></span
-              >{{ stats.paused ? "继续游戏" : "暂停游戏" }}
+              <span
+                v-if="!stats.paused"
+                class="ctl-icon mask-icon"
+                :style="monoIcon('pause')"
+                aria-hidden="true"
+              ></span
+              ><img v-else class="ctl-icon" :src="uiIcon('resume')" alt="" />{{
+                stats.paused ? "继续游戏" : "暂停游戏"
+              }}
             </button>
           </div>
         </section>
@@ -1720,8 +1767,9 @@ onBeforeUnmount(() => {
           </div>
           <div class="canvas-wrap">
             <div v-if="stats.fogSeconds > 0" class="fog-clear-badge">清雾 {{ stats.fogSeconds }} 秒</div>
-            <div v-if="stats.weather" class="weather-badge" :class="{ warm: stats.weather === '阳光雨' }">
-              <span>{{ stats.weather }}</span><small>{{ stats.weatherSeconds }} 秒 · {{ stats.weather === '寒风' ? '全场减速' : '阳光加速' }}</small>
+            <div v-if="stats.weather" class="weather-badge" :class="{ warm: stats.weather === '阳光雨' || stats.weather === '烈日' }">
+              <span class="weather-icon"><img :src="weatherIcon" :style="{ marginLeft: -stats.weatherFrame * 28 + 'px' }" alt="" /></span>
+              <span>{{ stats.weather }}</span><small>{{ stats.weatherSeconds }} 秒 · {{ stats.weatherHint }}</small>
             </div>
             <div ref="gameEl" class="phaser-mount" aria-label="游戏草坪"></div>
             <div v-if="booting && !result" class="game-overlay">
@@ -1793,110 +1841,140 @@ onBeforeUnmount(() => {
                 </button>
               </div>
             </div>
-            <div v-if="result" class="game-overlay">
-              <div class="pause-card">
-                <img
-                  :src="result === 'won' ? pa('sunflower') : za('basic')"
-                  alt=""
-                /><span class="kicker">{{
-                  result === "won" ? "A LITTLE VICTORY" : "TRY ANOTHER STRATEGY"
-                }}</span>
-                <h2>
-                  {{
-                    result === "won"
-                      ? "又守住了美好的一天。"
-                      : "僵尸闯进了庭院。"
-                  }}
-                </h2>
-                <p>
-                  {{
-                    result === "won"
-                      ? dailyMode
-                        ? dailyOfficial
-                          ? "今日挑战完成，最佳成绩已记录。"
-                          : "换一局挑战完成，不计入官方最佳。"
-                        : engine?.settings.difficulty === "custom"
-                          ? "自定义挑战成绩已保存，不影响冒险解锁。"
-                          : "通关进度已保存，下一段冒险在等你。"
-                      : loseTip
-                  }}
-                </p>
-                <p v-if="dailyMode && daily.mods.length" class="daily-mods">
-                  今日条件：<span v-for="m in daily.mods" :key="m.name">{{ m.name }}</span>
-                </p>
-                <p v-if="result === 'won' && resultStars" class="result-stars">
-                  {{ "★".repeat(resultStars) }}{{ "☆".repeat(3 - resultStars) }}
-                </p>
-                <div class="result-stats">
-                  <span
-                    >用时 {{ Math.floor((engine?.time || 0) / 60) }}:{{
-                      String(Math.floor((engine?.time || 0) % 60)).padStart(
-                        2,
-                        "0",
-                      )
-                    }}</span
-                  ><span>击杀 {{ engine?.kills || 0 }}</span
-                  ><span>剩余阳光 {{ engine?.sun || 0 }}</span
-                  ><span v-if="engine?.settings.mowers"
-                    >失去小推车
-                    {{ engine.mowersLost }}</span
+            <div v-if="result" class="game-overlay result-overlay">
+              <div
+                class="result-card"
+                :class="result === 'won' ? 'is-won' : 'is-lost'"
+                role="dialog"
+                aria-modal="true"
+              >
+                <header class="result-head">
+                  <span class="result-portrait"
+                    ><img
+                      :src="result === 'won' ? pa('sunflower') : za('basic')"
+                      :alt="result === 'won' ? '向日葵' : '僵尸'"
+                  /></span>
+                  <div class="result-heading">
+                    <p class="result-kicker">
+                      {{
+                        result === "won"
+                          ? "A LITTLE VICTORY"
+                          : "TRY ANOTHER STRATEGY"
+                      }}
+                    </p>
+                    <h2>
+                      {{
+                        result === "won"
+                          ? "又守住了美好的一天。"
+                          : "僵尸闯进了庭院。"
+                      }}
+                    </h2>
+                  </div>
+                </header>
+                <div class="result-body">
+                  <p class="result-lead">
+                    {{
+                      result === "won"
+                        ? dailyMode
+                          ? dailyOfficial
+                            ? "今日挑战完成，最佳成绩已记录。"
+                            : "换一局挑战完成，不计入官方最佳。"
+                          : engine?.settings.difficulty === "custom"
+                            ? "自定义挑战成绩已保存，不影响冒险解锁。"
+                            : "通关进度已保存，下一段冒险在等你。"
+                        : loseTip
+                    }}
+                  </p>
+                  <p v-if="dailyMode && daily.mods.length" class="daily-mods">
+                    今日条件：<span v-for="m in daily.mods" :key="m.name">{{ m.name }}</span>
+                  </p>
+                  <p v-if="result === 'won' && resultStars" class="result-stars">
+                    {{ "★".repeat(resultStars) }}{{ "☆".repeat(3 - resultStars) }}
+                  </p>
+                  <div class="result-stats">
+                    <span
+                      ><b
+                        >{{ Math.floor((engine?.time || 0) / 60) }}:{{
+                          String(Math.floor((engine?.time || 0) % 60)).padStart(
+                            2,
+                            "0",
+                          )
+                        }}</b
+                      ><small>用时</small></span
+                    ><span
+                      ><b>{{ engine?.kills || 0 }}</b><small>击杀</small></span
+                    ><span
+                      ><b>{{ engine?.sun || 0 }}</b><small>剩余阳光</small></span
+                    ><span v-if="engine?.settings.mowers"
+                      ><b>{{ engine.mowersLost }}</b><small>失去小推车</small></span
+                    >
+                  </div>
+                  <p
+                    v-for="name in newAchievements"
+                    :key="name"
+                    class="achievement-earned"
                   >
+                    解锁成就：{{ name }}
+                  </p>
+                  <div v-if="result === 'lost' && !dailyMode" class="difficulty-switch">
+                    <span
+                      >{{
+                        (save.data.lossStreak[levelId] ?? 0) >= 2
+                          ? "这关有点难？换个难度："
+                          : "换个难度："
+                      }}</span
+                    ><button
+                      v-for="d in ['casual', 'standard', 'hard'] as const"
+                      :key="d"
+                      class="plain"
+                      :class="{
+                        active: engine?.settings.difficulty === d,
+                        recommend:
+                          (save.data.lossStreak[levelId] ?? 0) >= 2 &&
+                          d === 'casual' &&
+                          engine?.settings.difficulty !== 'casual',
+                      }"
+                      @click="switchDifficulty(d)"
+                    >
+                      {{ modeNames[d] }}
+                    </button>
+                  </div>
+                  <p v-if="engine?.coins && !dailyMode" class="coin-earned">
+                    本局收集金币 +{{ engine.coins }}
+                  </p>
                 </div>
-                <p
-                  v-for="name in newAchievements"
-                  :key="name"
-                  class="achievement-earned"
-                >
-                  解锁成就：{{ name }}
-                </p>
-                <div v-if="result === 'lost' && !dailyMode" class="difficulty-switch">
-                  <span
-                    >{{
-                      (save.data.lossStreak[levelId] ?? 0) >= 2
-                        ? "这关有点难？换个难度："
-                        : "换个难度："
-                    }}</span
-                  ><button
-                    v-for="d in ['casual', 'standard', 'hard'] as const"
-                    :key="d"
-                    class="plain"
-                    :class="{
-                      active: engine?.settings.difficulty === d,
-                      recommend:
-                        (save.data.lossStreak[levelId] ?? 0) >= 2 &&
-                        d === 'casual' &&
-                        engine?.settings.difficulty !== 'casual',
-                    }"
-                    @click="switchDifficulty(d)"
+                <div class="result-actions">
+                  <button
+                    class="primary solo"
+                    @click="
+                      result === 'won' &&
+                      !dailyMode &&
+                      levelId < 50 &&
+                      engine?.settings.difficulty !== 'custom'
+                        ? chooseLevel(levelId + 1)
+                        : start()
+                    "
                   >
-                    {{ modeNames[d] }}
+                    {{
+                      result === "won" &&
+                      !dailyMode &&
+                      levelId < 50 &&
+                      engine?.settings.difficulty !== "custom"
+                        ? "前往下一关 →"
+                        : "重新挑战 →"
+                    }}
+                  </button>
+                  <button
+                    v-if="dailyMode"
+                    class="text-button solo"
+                    @click="rerollDaily"
+                  >
+                    换一局
+                  </button>
+                  <button class="text-button solo" @click="home">
+                    返回庭院
                   </button>
                 </div>
-                <p v-if="engine?.coins && !dailyMode" class="coin-earned">
-                  本局收集金币 +{{ engine.coins }}
-                </p>
-                <button
-                  class="primary solo"
-                  @click="
-                    result === 'won' &&
-                    !dailyMode &&
-                    levelId < 50 &&
-                    engine?.settings.difficulty !== 'custom'
-                      ? chooseLevel(levelId + 1)
-                      : start()
-                  "
-                >
-                  {{
-                    result === "won" &&
-                    !dailyMode &&
-                    levelId < 50 &&
-                    engine?.settings.difficulty !== "custom"
-                      ? "前往下一关 →"
-                      : "重新挑战 →"
-                  }}</button
-                ><button v-if="dailyMode" class="text-button solo" @click="rerollDaily">
-                  换一局</button
-                ><button class="text-button solo" @click="home">返回庭院</button>
               </div>
             </div>
           </div>

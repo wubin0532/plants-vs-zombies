@@ -367,7 +367,7 @@ async function importFile(name) {
     return;
   }
   // 2) 云雾与暖光：直接覆盖运行时贴图
-  if (/^mist-[abc]$/.test(stemOf(name)) || stemOf(name) === "glow-lantern") {
+  if (/^mist-[abc]$/.test(stemOf(name)) || stemOf(name) === "glow-lantern" || stemOf(name) === "overcast-cloud") {
     const glow = stemOf(name) === "glow-lantern";
     const w = glow ? 256 : 1024, h = glow ? 256 : 512;
     const seamless = glow ? buf : await makeSeamless(await sharp(buf).resize(w, h, { fit: "fill" }).png().toBuffer(), true);
@@ -423,6 +423,96 @@ async function importFile(name) {
     const out = await sharp(await makeSeamless(resized, true)).webp({ quality: 90 }).toBuffer();
     await writeFile("public/assets/water/water-ripple.webp", out);
     done.push("water-ripple.png → public/assets/water/ (512×128，双向无缝)");
+    return;
+  }
+  // 6b) 天气雨幕：256×256 双向无缝
+  if (stemOf(name) === "rain-streak") {
+    const resized = await sharp(buf).resize(256, 256, { fit: "fill" }).png().toBuffer();
+    const out = await sharp(await makeSeamless(resized, true)).webp({ quality: 90 }).toBuffer();
+    await writeFile("public/assets/weather/rain-streak.webp", out);
+    done.push("rain-streak.png → public/assets/weather/ (256×256，双向无缝)");
+    return;
+  }
+  // 6c) 水面动画：任意帧横排 → 归一化 2048×128（每帧 512×128，横向无缝）
+  /** 把一张横排精灵表裁成 n 帧，逐帧归一化后拼回一张横排表并输出。 */
+  const sheet = async (spec, out) => {
+    const meta = await sharp(buf).metadata();
+    const fw = Math.floor((meta.width ?? spec.n * spec.w) / spec.n);
+    const fh = meta.height ?? spec.h;
+    const frames = [];
+    for (let i = 0; i < spec.n; i++) {
+      const raw = await sharp(buf).extract({ left: i * fw, top: 0, width: fw, height: fh }).png().toBuffer();
+      let frame;
+      if (spec.water) {
+        frame = await waterStrip(await sharp(await trim(raw)).resize(spec.w, spec.h, { fit: "fill" }).png().toBuffer());
+      } else {
+        const fitted = await sharp(await trim(raw)).resize(spec.w, spec.h, { fit: "fill" }).png().toBuffer();
+        frame = spec.seamless ? await makeSeamless(fitted, false) : fitted;
+      }
+      frames.push(frame);
+    }
+    await sharp({ create: { width: spec.w * spec.n, height: spec.h, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
+      .composite(frames.map((f, i) => ({ input: f, left: i * spec.w, top: 0 })))
+      .webp({ quality: 90 })
+      .toFile(out);
+    done.push(`${name} → ${out} (${spec.w * spec.n}×${spec.h}，${spec.n} 帧)`);
+  };
+  if (stemOf(name) === "water-frames") {
+    await sheet({ n: 4, w: 512, h: 128, seamless: true }, "public/assets/water/water-frames.webp");
+    return;
+  }
+  if (stemOf(name) === "water-strip-frames") {
+    await sheet({ n: 4, w: 891, h: 168, water: true }, "public/assets/water/water-strip-frames.webp");
+    return;
+  }
+  // 6d) 天气/氛围单张贴图（平铺类自动做无缝）
+  const weatherSingle = {
+    "heat-shimmer": { w: 256, h: 256, seamless: true },
+    "cloud-shadow": { w: 1024, h: 512, seamless: true },
+    "water-caustics": { w: 512, h: 256, seamless: true },
+    "frost": { w: 256, h: 256, seamless: true },
+    "snow-tile": { w: 256, h: 256, seamless: true },
+    "blackout-glow": { w: 512, h: 512, seamless: false },
+    "sun-flare": { w: 512, h: 512, seamless: false },
+    "eclipse-mask": { w: 1024, h: 512, seamless: false },
+  };
+  if (weatherSingle[stemOf(name)]) {
+    const spec = weatherSingle[stemOf(name)];
+    let img = await sharp(buf).resize(spec.w, spec.h, { fit: "fill" }).png().toBuffer();
+    if (spec.seamless) img = await makeSeamless(img, true);
+    await sharp(img).webp({ quality: 90 }).toFile(`public/assets/weather/${stemOf(name)}.webp`);
+    done.push(`${name} → public/assets/weather/ (${spec.w}×${spec.h})`);
+    return;
+  }
+  // 6e) 天气/水面精灵表（雨滴、水花、落叶、天气图标）
+  const weatherSheet = {
+    "rain-splash": { n: 4, w: 128, h: 128, place: "bottom" },
+    "water-splash": { n: 4, w: 128, h: 128, place: "bottom" },
+    "wind-leaves": { n: 6, w: 128, h: 128, place: "center" },
+    "icon-weather": { n: 5, w: 128, h: 128, place: "center" },
+  };
+  if (weatherSheet[stemOf(name)]) {
+    const spec = weatherSheet[stemOf(name)];
+    const meta = await sharp(buf).metadata();
+    const fw = Math.floor((meta.width ?? spec.n * spec.w) / spec.n);
+    const fh = meta.height ?? spec.h;
+    const frames = [];
+    for (let i = 0; i < spec.n; i++) {
+      const raw = await sharp(buf).extract({ left: i * fw, top: 0, width: fw, height: fh }).png().toBuffer();
+      frames.push(await place(await trim(raw), spec.w, spec.h, spec.place));
+    }
+    await sharp({ create: { width: spec.w * spec.n, height: spec.h, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
+      .composite(frames.map((f, i) => ({ input: f, left: i * spec.w, top: 0 })))
+      .webp({ quality: 90 })
+      .toFile(`public/assets/weather/${stemOf(name)}.webp`);
+    done.push(`${name} → public/assets/weather/ (${spec.w * spec.n}×${spec.h}，${spec.n} 帧)`);
+    return;
+  }
+  // 6f) 可选 UI 图标（彩色 + 单色）
+  if (/^ui-/.test(stemOf(name)) && (/^(ui-speed|ui-pause|ui-fullscreen)(-mono)?$/.test(stemOf(name)))) {
+    const placed = await place(await trim(buf), 512, 512, "center");
+    await sharp(placed).webp({ quality: 92 }).toFile(`public/assets/icons/${stemOf(name)}.webp`);
+    done.push(`${name} → public/assets/icons/ (512×512)`);
     return;
   }
   // 6) Token

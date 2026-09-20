@@ -14,7 +14,7 @@ const enemy = (e: Engine, row = 2, x = 5, id = 'basic') => {
 
 describe('冰电反应', () => {
   it('基础数值与第 1-8 关解锁', () => {
-    expect(plantById.arc).toMatchObject({ cost: 225, hp: 300, cooldown: 7.5, damage: 40, interval: 1.4, unlock: 8 });
+    expect(plantById.arc).toMatchObject({ cost: 225, hp: 300, cooldown: 7.5, damage: 50, interval: 1.4, unlock: 8 });
   });
   it('一次满额反应造成 170 总伤害（同排至多 3 目标传导），消耗主目标冰冻但不消耗次级目标状态', () => {
     const e = new Engine(8, []), a = enemy(e);

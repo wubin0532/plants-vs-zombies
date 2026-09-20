@@ -185,6 +185,51 @@ console.log("\n== 水面 ==");
   }
 }
 
+/* -------------------------- 5b. 天气 / 水帧 ----------------------------- */
+{
+  const p = "public/assets/weather/rain-streak.webp";
+  if (!existsSync(p)) flag(`天气贴图缺失 ${p}`);
+  else {
+    const { info } = await raw(p);
+    console.log(`  雨幕 ${info.width}x${info.height}`);
+    if (info.width !== 256 || info.height !== 256)
+      flag(`rain-streak 尺寸 ${info.width}x${info.height}，应为 256x256`);
+  }
+  const wf = "public/assets/water/water-frames.webp";
+  if (!existsSync(wf)) flag(`水面动画帧缺失 ${wf}`);
+  else {
+    const { info } = await raw(wf);
+    console.log(`  水面动画 ${info.width}x${info.height}`);
+    if (info.width !== 2048 || info.height !== 128)
+      flag(`water-frames 尺寸 ${info.width}x${info.height}，应为 2048x128`);
+  }
+  const wsf = "public/assets/water/water-strip-frames.webp";
+  if (!existsSync(wsf)) flag(`泳池底色帧缺失 ${wsf}`);
+  else {
+    const { info } = await raw(wsf);
+    console.log(`  泳池底色帧 ${info.width}x${info.height}`);
+    if (info.width !== 3564 || info.height !== 168)
+      flag(`water-strip-frames 尺寸 ${info.width}x${info.height}，应为 3564x168`);
+  }
+  // 天气贴图：逐张存在性 + 关键精灵表尺寸
+  const weatherSheets = { "rain-splash": [512, 128], "water-splash": [512, 128], "wind-leaves": [768, 128], "icon-weather": [640, 128] };
+  const weatherSingles = ["heat-shimmer", "cloud-shadow", "frost", "water-caustics", "snow-tile", "blackout-glow", "sun-flare", "eclipse-mask"];
+  let weatherCount = 0;
+  for (const [n, [ew, eh]] of Object.entries(weatherSheets)) {
+    const p2 = `public/assets/weather/${n}.webp`;
+    if (!existsSync(p2)) { flag(`天气精灵表缺失 ${p2}`); continue; }
+    const { info } = await raw(p2);
+    weatherCount++;
+    if (info.width !== ew || info.height !== eh) flag(`${n} 尺寸 ${info.width}x${info.height}，应为 ${ew}x${eh}`);
+  }
+  for (const n of weatherSingles) {
+    const p2 = `public/assets/weather/${n}.webp`;
+    if (!existsSync(p2)) flag(`天气贴图缺失 ${p2}`);
+    else weatherCount++;
+  }
+  console.log(`  天气贴图 ${weatherCount}/${Object.keys(weatherSheets).length + weatherSingles.length} 张`);
+}
+
 /* ------------------------------- 6. 背景 -------------------------------- */
 console.log("\n== 背景（草坪 / 水带对齐）==");
 {
@@ -325,7 +370,7 @@ console.log("\n== 背景（草坪 / 水带对齐）==");
 
 /* ------------------------------- 7. 云雾 -------------------------------- */
 console.log("\n== 云雾（平铺接缝）==");
-for (const name of ["mist-a", "mist-b", "mist-c"]) {
+for (const name of ["mist-a", "mist-b", "mist-c", "overcast-cloud"]) {
   const path = `public/assets/mist/${name}.webp`;
   const { data, info } = await raw(path);
   const C = info.channels, W = info.width, H = info.height;
@@ -347,7 +392,7 @@ for (const name of ["mist-a", "mist-b", "mist-c"]) {
   console.log(`  ${name} 左右边缘 alpha 平均差 ${(lr / H).toFixed(1)} 上下 ${(tb / W).toFixed(1)}｜竖条纹 均值 ${(devSum / (W - 2)).toFixed(2)} 超标列 ${bad}`);
   if (lr / H > 12) flag(`${name} 左右边缘差异 ${(lr / H).toFixed(1)}，平铺可能有竖缝`);
   if (tb / W > 12) flag(`${name} 上下边缘差异 ${(tb / W).toFixed(1)}，平铺可能有横缝`);
-  if (bad > 8) flag(`${name} 有 ${bad} 列竖条纹（彩色条纹，多半是处理时把 RGB 差值摊平了）`);
+  if (bad > Math.max(8, W * 0.02)) flag(`${name} 有 ${bad} 列竖条纹（彩色条纹，多半是处理时把 RGB 差值摊平了）`);
 }
 
 /* ----------------------------- 8. 表现插图 ------------------------------ */

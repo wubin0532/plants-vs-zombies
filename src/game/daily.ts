@@ -36,7 +36,7 @@ export type DailyMod = {
   /** 单一尸群的敌人名单。 */
   enemies?: string[];
   /** 常驻天气类型。 */
-  weather?: "rain" | "wind";
+  weather?: "rain" | "wind" | "overcast" | "blazing" | "blackout";
 };
 
 export type DailyChallenge = {
@@ -299,14 +299,24 @@ function makeMod(id: DailyModId, rand: () => number, level: Level): DailyMod {
     case "wide-deck":
       return { id, name: "加宽卡组", tone: "boon", value: 1, desc: "卡槽 +1" };
     case "always-weather": {
-      const weather = rand() < 0.5 ? "rain" : "wind";
+      const roll = rand();
+      const weather: "rain" | "wind" | "overcast" | "blazing" | "blackout" =
+        roll < 0.3 ? "rain" : roll < 0.6 ? "wind" : roll < 0.8 ? "overcast" : roll < 0.9 ? "blazing" : "blackout";
+      const name =
+        weather === "rain" ? "阳光雨" : weather === "wind" ? "寒风" : weather === "overcast" ? "阴天" : weather === "blazing" ? "烈日" : "停电";
+      const desc =
+        weather === "rain" ? "阳光雨反复降临"
+        : weather === "wind" ? "寒风反复过境，僵尸持续减速"
+        : weather === "overcast" ? "阴天反复降临，产阳光植物减产"
+        : weather === "blazing" ? "烈日反复当空，阳光更快但僵尸更躁动"
+        : "停电反复发生，产阳光植物间歇停摆";
       return {
         id,
-        name: weather === "rain" ? "阳光雨" : "寒风",
-        tone: "boon",
+        name,
+        tone: weather === "blackout" ? "twist" : "boon",
         value: 0,
         weather,
-        desc: weather === "rain" ? "阳光雨反复降临" : "寒风反复过境，僵尸持续减速",
+        desc,
       };
     }
     case "mono-zombies": {

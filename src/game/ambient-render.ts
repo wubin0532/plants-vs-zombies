@@ -1,12 +1,14 @@
 import type Phaser from "phaser";
 import { BOARD } from "./layout";
-import { weatherOpacity, WIND_DURATION, RAIN_DURATION } from "./ambient";
+import { weatherOpacity, WIND_DURATION, RAIN_DURATION, OVERCAST_DURATION, BLAZING_DURATION } from "./ambient";
 
-export function drawWeather(g: Phaser.GameObjects.Graphics, time: number, windUntil: number, rainUntil: number, quality: string) {
+export function drawWeather(g: Phaser.GameObjects.Graphics, time: number, windUntil: number, rainUntil: number, overcastUntil: number, blazingUntil: number, quality: string) {
   g.clear();
   const cold = weatherOpacity(time, windUntil, WIND_DURATION);
   const rain = weatherOpacity(time, rainUntil, RAIN_DURATION);
-  if (!cold && !rain) return;
+  const overcast = weatherOpacity(time, overcastUntil, OVERCAST_DURATION);
+  const blaze = weatherOpacity(time, blazingUntil, BLAZING_DURATION);
+  if (!cold && !rain && !overcast && !blaze) return;
   const width = BOARD.cell * BOARD.cols;
   const count = quality === "low" ? 18 : quality === "medium" ? 32 : 48;
   if (cold) {
@@ -28,6 +30,22 @@ export function drawWeather(g: Phaser.GameObjects.Graphics, time: number, windUn
         const a = ray * Math.PI / 3 + time * 0.2;
         g.lineBetween(x - Math.cos(a) * size, y - Math.sin(a) * size, x + Math.cos(a) * size, y + Math.sin(a) * size);
       }
+    }
+  }
+  if (overcast) {
+    // 阴天：草坪整体压暗；雨幕由 rain-streak 贴图层负责。
+    g.fillStyle(0x2b3a52, overcast * 0.16);
+    g.fillRect(BOARD.left, BOARD.top, width, BOARD.lawnHeight);
+  }
+  if (blaze) {
+    // 烈日：暖色罩色 + 缓慢上升的热浪，不消耗游戏随机数。
+    g.fillStyle(0xffc86b, blaze * 0.12);
+    g.fillRect(BOARD.left, BOARD.top, width, BOARD.lawnHeight);
+    for (let i = 0; i < Math.floor(count / 2); i++) {
+      const x = BOARD.left + ((i * 163 + time * 20) % width);
+      const y = BOARD.top + BOARD.lawnHeight - ((time * (40 + (i % 4) * 12) + i * 71) % BOARD.lawnHeight);
+      g.lineStyle(2, 0xffe6a8, blaze * 0.22);
+      g.lineBetween(x, y, x + 6, y - 16);
     }
   }
   if (rain) {

@@ -89,7 +89,7 @@ ssh fnos 'tar czf /vol1/1000/Docker/Data/garden-backup-$(date +%F).tar.gz -C /vo
 - After picking cards and entering a level, click a seed, then click a tile to plant.
 - Click to collect sun; click the shovel, then a plant to remove it.
 - Number keys 1–9 select seeds, S toggles the shovel, Esc cancels selection, Space pauses.
-- The game auto-pauses when switched to the background. In fullscreen battles the seed bar floats over the left margin of the board, and progress/timer collapse into a thin top bar ("take a break" only shows while paused). Portrait phones get a rotation guide (skippable); on iPhone, "Add to Home Screen" opens a standalone window without the address bar; in standalone mode the home page's top bar clears the status bar and sticks to the top.
+- The game auto-pauses when switched to the background. In fullscreen battles the seed bar floats over the left margin of the board, and progress/timer collapse into a thin top bar ("take a break" only shows while paused). Portrait phones get a rotation guide (skippable); on iPhone, "Add to Home Screen" opens a standalone window without the address bar; in standalone mode the home page's top bar clears the status bar and sticks to the top; a phone in landscape enters battle fullscreen automatically (after a manual exit it stays windowed for that landscape orientation until you rotate back or start a new battle).
 - Conveyor belt: planting is free; in bowling, nuts roll to attack; in vasebreaking, click the vases directly; in zombatar levels, click the zombies directly.
 - When the Cob Cannon is ready, click the cannon, then click the target tile to fire.
 - Clear Dr. Zomboss's fireballs with an Ice-shroom, and iceballs with a Jalapeno in the same row.
@@ -104,7 +104,7 @@ Notable differences from the original:
 
 - Waves are generated per chapter and difficulty, not recreated from the original per-level spawn tables; timing, values, and boss fights are simplified.
 - Runtime assets are converted to WebP: 50 plants (49 with dedicated action atlases), 26 zombies, and 16 effects; some characters use dedicated sequences, the rest use layered procedural animation — still not full frame-by-frame hand-drawn animation.
-- Multi-shot/burst fire and butter are resolved per real projectile (20 damage each, butter decided before firing); Starfruit fires five fixed-direction stars, lobbed trajectories are still simplified; some original details still need item-by-item comparison.
+- Multi-shot/burst fire and butter are resolved per real projectile (20 damage per shot for Repeater/Gatling, 25 per spike for Cattail; butter deals double the Kernel damage and is decided before firing); Starfruit fires five fixed-direction stars, lobbed trajectories are still simplified; some original details still need item-by-item comparison.
 - Shop plants unlock uniformly after the first clear, card slots expand per chapter; a simple Zen-garden-style item shop exists; there is no separate minigame, survival, puzzle, or garden mode yet.
 - The Yeti zombie's almanac entry and behavior are defined, and it has been added to replay-level spawns (~20% chance, deterministically rolled from (seed, replay count) on each replay).
 - No mid-battle saves. Accounts and cloud saves are an optional simple implementation: passwords are scrypt-hashed, sessions use signed cookies; but save content is produced by the client — no anti-cheat or score validation, and no email-based password recovery.

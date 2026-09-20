@@ -1,5 +1,5 @@
 import { applyControl, tickControls, consumeIce, electricTarget, conductionTargets, attackTarget, projectileTarget, isLob } from "./elements";
-import { WIND_DURATION, RAIN_DURATION, TOKEN_LIFETIME, tokenPose } from "./ambient";
+import { WIND_DURATION, RAIN_DURATION, OVERCAST_DURATION, BLAZING_DURATION, BLACKOUT_DURATION, TOKEN_LIFETIME, tokenPose } from "./ambient";
 import { jumpHeight } from "./animation";
 import { plantSound, type SoundEvent, type SoundKind } from "./audio";
 import { laneStrength, tiltFor, unitPrice } from "./director";
@@ -263,9 +263,12 @@ export class Engine {
   mowersLost = 0;
   assaultAlert: { at: number; row: number } | null = null;
   eventAt = -1;
-  eventKind: "" | "rain" | "wind" = "";
+  eventKind: "" | "rain" | "wind" | "overcast" | "blazing" | "blackout" = "";
   rainUntil = 0;
   windUntil = 0;
+  overcastUntil = 0;
+  blazingUntil = 0;
+  blackoutUntil = 0;
   /** 每日词缀：天降阳光间隔覆盖（0 = 默认 4/6 秒）。 */
   skySunInterval = 0;
   /** 黄金僵尸出现概率。 */
@@ -336,7 +339,10 @@ export class Engine {
     }
     if (this.level.mode === "normal") {
       this.eventAt = this.settings.duration * (0.3 + this.random() * 0.4);
-      this.eventKind = this.random() < 0.5 ? "rain" : "wind";
+      const roll = this.random();
+      this.eventKind = this.smartAttack
+        ? roll < 0.25 ? "rain" : roll < 0.5 ? "wind" : roll < 0.7 ? "overcast" : roll < 0.85 ? "blazing" : "blackout"
+        : roll < 0.3 ? "rain" : roll < 0.6 ? "wind" : roll < 0.8 ? "overcast" : "blazing";
     }
   }
   /** 每日词缀：覆盖天降阳光间隔，并重置当前计时。 */
@@ -1393,6 +1399,18 @@ export class Engine {
             );
         this.say("阳光雨！向日葵立刻产出，阳光掉落加速");
         this.sound("sun");
+      } else if (this.eventKind === "overcast") {
+        this.overcastUntil = this.time + OVERCAST_DURATION;
+        this.say("阴天来袭：产阳光植物光合作用变慢，8 秒内减产");
+        this.sound("wind");
+      } else if (this.eventKind === "blazing") {
+        this.blazingUntil = this.time + BLAZING_DURATION;
+        this.say("烈日当空：天降阳光更快，但僵尸变得躁动");
+        this.sound("sun");
+      } else if (this.eventKind === "blackout") {
+        this.blackoutUntil = this.time + BLACKOUT_DURATION;
+        this.say("停电！产阳光植物暂时停止工作");
+        this.sound("warning");
       } else {
         this.windUntil = this.time + WIND_DURATION;
         for (const z of this.zombies) applyControl(z, "weatherSlow", WIND_DURATION);
@@ -1422,7 +1440,10 @@ export class Engine {
           25, false, "sky",
         );
         this.natural =
-          this.time < this.rainUntil ? 3 : this.skySunInterval || 6;
+          this.time < this.rainUntil
+            ? 4
+            : (this.skySunInterval || 8) *
+              (this.time < this.blazingUntil ? 0.5 : 1);
       }
     }
     if (this.isBelt) {
@@ -1515,9 +1536,15 @@ export class Engine {
       p.age += dt;
       if (p.hurt) p.hurt = Math.max(0, p.hurt - dt);
       if (p.sleep) continue;
-      p.timer -= dt;
-      if (p.digest) p.digest = Math.max(0, p.digest - dt);
       const d = plantById[p.id];
+      const sunStall =
+        d.kind === "sun" && this.time < this.blackoutUntil
+          ? 0
+          : d.kind === "sun" && this.time < this.overcastUntil
+            ? 0.5
+            : 1;
+      p.timer -= dt * sunStall;
+      if (p.digest) p.digest = Math.max(0, p.digest - dt);
       const targets = this.livingEnemies();
       const ahead = targets
         .filter(
@@ -2400,6 +2427,7 @@ export class Engine {
     }
     if (z.id === "paper" && z.armor === 0) speed *= 2.8;
     if (z.jumped && ["pole", "dolphin"].includes(z.id)) speed *= 0.5;
+    if (this.time < this.blazingUntil) speed *= 1.2;
     if (slowed) speed *= 0.5;
     z.x += speed * dt * (z.reverse ? 1 : -1);
     if (

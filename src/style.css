@@ -753,6 +753,17 @@ footer i {
   display: inline-flex;
   flex: none;
 }
+/* 单色图标蒙版：形状来自 -mono 图的 alpha，颜色跟随按钮文字。 */
+.mask-icon {
+  display: inline-block;
+  background-color: currentColor;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}
 .ctl-pause {
   gap: 3px;
 }
@@ -952,6 +963,8 @@ footer i {
 .weather-badge { position: absolute; z-index: 5; left: 18%; top: 4%; pointer-events: none; padding: 6px 12px; border: 1px solid #d2f4ff; border-radius: 18px; background: #305864df; color: #edfcff; box-shadow: 0 2px 8px #172f3340; display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .weather-badge small { font-size: 10px; opacity: .85; }
 .weather-badge.warm { border-color: #fff0bd; color: #fff5cb; background: #785c2de8; }
+.weather-badge .weather-icon { width: 28px; height: 28px; overflow: hidden; display: inline-flex; align-items: center; flex: 0 0 auto; }
+.weather-badge .weather-icon img { height: 28px; width: auto; display: block; }
 @media (prefers-reduced-motion: reduce) { .resource-count { animation: none; } }
 .battle-seeds {
   display: flex;
@@ -3772,5 +3785,257 @@ body.battle-fullscreen {
     backdrop-filter: blur(6px);
   }
 }
+
+/* ==========================================================================
+   结算弹窗 · 扁平风格
+   纯色块 + 1px 描边 + 硬边界，不使用渐变、内阴影与多层立体投影；
+   胜利=叶绿、失败=陶土，用色带区分结果，按钮一并走平涂。
+   ========================================================================== */
+.result-overlay {
+  background: #16281f99;
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+.result-card {
+  --flat-ink: #2c422f;
+  --flat-muted: #6f7a58;
+  --flat-line: #e3dfc4;
+  --flat-cost: #f1efdf;
+  --flat-gold: #e9c46a;
+  display: flex;
+  flex-direction: column;
+  width: min(430px, 92vw);
+  max-height: 94%;
+  overflow: hidden;
+  border: 1px solid var(--flat-line);
+  border-radius: 20px;
+  background: #fbfaf3;
+  color: var(--flat-ink);
+  text-align: center;
+  box-shadow: 0 26px 54px -30px #0f2118e0;
+  animation: result-in 0.26s cubic-bezier(0.22, 0.8, 0.3, 1) backwards;
+}
+@keyframes result-in {
+  from { opacity: 0; transform: translateY(14px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+/* 顶部色带 */
+.result-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 22px;
+  border-radius: 19px 19px 0 0;
+  background: #4f7a44;
+  color: #f4f6e6;
+  text-align: left;
+}
+.result-heading { min-width: 0; }
+.result-card.is-lost .result-head { background: #b85c44; }
+.result-portrait {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 62px;
+  height: 62px;
+  border-radius: 50%;
+  background: #f4f6e6;
+  overflow: hidden;
+}
+.result-portrait img { width: 48px; height: 54px; object-fit: contain; }
+.result-card .result-kicker {
+  margin: 0 0 4px;
+  font-family: Georgia, "Times New Roman", "Songti SC", serif;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  color: #dfe8cb;
+}
+.result-card.is-lost .result-kicker { color: #f7ded4; }
+.result-card .result-head h2 {
+  margin: 0;
+  font-size: 21px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  color: inherit;
+}
+.result-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 20px 24px 14px;
+}
+.result-card .result-lead {
+  margin: 0 0 16px;
+  font-size: 12px;
+  line-height: 1.85;
+  color: var(--flat-muted);
+}
+/* 统计：等宽扁平格子，数值在上、标签在下 */
+.result-card .result-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
+  gap: 8px;
+  margin: 0;
+  font-size: 12px;
+}
+.result-card .result-stats > span {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 10px 6px 8px;
+  border: 1px solid var(--flat-line);
+  border-radius: 12px;
+  background: var(--flat-cost);
+  color: var(--flat-ink);
+  font-weight: 400;
+}
+.result-card .result-stats b {
+  font: 700 19px/1.1 Georgia, "Songti SC", serif;
+  letter-spacing: 0.01em;
+  color: #35533a;
+}
+.result-card .result-stats small {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--flat-muted);
+}
+.result-card .result-stars {
+  margin: 14px 0 2px;
+  font-size: 20px;
+  letter-spacing: 7px;
+  text-indent: 7px;
+  color: #d9a843;
+}
+.result-card .daily-mods { margin: 0 0 14px; font-size: 11px; color: #8a6f2a; }
+.result-card .daily-mods span {
+  display: inline-block;
+  margin: 2px 3px 0 0;
+  padding: 3px 9px;
+  border: 1px solid #e2cf9c;
+  border-radius: 999px;
+  background: #f7edd3;
+  font-size: 11px;
+}
+.result-card .achievement-earned {
+  margin: 12px 0 0;
+  padding: 8px 12px;
+  border: 1px solid #e6d6a2;
+  border-radius: 10px;
+  background: #faf1d8;
+  color: #8a6a1c;
+  font-size: 12px;
+  font-weight: 700;
+}
+/* 失败时的难度切换：扁平小卡 */
+.result-card .difficulty-switch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 14px 0 0;
+  font-size: 11px;
+  color: var(--flat-muted);
+}
+.result-card .difficulty-switch .plain {
+  width: auto;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 14px;
+  border: 1px solid var(--flat-line);
+  border-radius: 10px;
+  background: #f2f0e1;
+  color: #4d5c3c;
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: none;
+}
+.result-card .difficulty-switch .plain:hover:not(:disabled) {
+  background: #e9e7d4;
+  border-color: #cfcaa8;
+  transform: none;
+}
+.result-card .difficulty-switch .plain.active { border-color: #7f9a55; background: #e6edd2; }
+.result-card .difficulty-switch .plain.recommend { border-color: #d9a843; background: #f7edcf; box-shadow: none; }
+.result-card .coin-earned { margin: 12px 0 0; color: #a87c1e; font-size: 12px; font-weight: 700; }
+/* 操作区：所有按钮平涂、同宽、无立体阴影 */
+.result-actions {
+  flex: none;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 14px 22px 18px;
+  border-top: 1px solid #ece8d4;
+  font-size: inherit;
+  letter-spacing: normal;
+  color: inherit;
+}
+.result-card .primary,
+.result-card .text-button {
+  width: auto;
+  flex: 0 0 auto;
+  margin: 0;
+  border-radius: 12px;
+  font-size: 13px;
+  box-shadow: none;
+  transform: none;
+  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+}
+.result-card .primary {
+  flex: 1 1 190px;
+  max-width: 260px;
+  padding: 13px 18px;
+  border: 1px solid #cfa64e;
+  background: var(--flat-gold);
+  color: #3a3214;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+.result-card .primary:hover:not(:disabled) {
+  background: #f0d084;
+  border-color: #c39a41;
+  box-shadow: none;
+  transform: none;
+}
+.result-card .primary:active:not(:disabled) {
+  background: #d9ae52;
+  box-shadow: none;
+  transform: none;
+}
+.result-card .text-button {
+  padding: 12px 16px;
+  background: transparent;
+  color: var(--flat-muted);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+.result-card .text-button:hover { background: #efeeda; color: #3f5836; transform: none; }
+/* 小屏与沉浸战斗里收紧留白，保证一屏放下 */
+@media (max-height: 640px) {
+  .result-head { padding: 14px 18px; gap: 11px; }
+  .result-portrait { width: 52px; height: 52px; }
+  .result-portrait img { width: 40px; height: 45px; }
+  .result-card .result-head h2 { font-size: 18px; }
+  .result-body { padding: 14px 18px 2px; }
+  .result-card .result-lead { margin-bottom: 12px; }
+  .result-card .result-stats { grid-template-columns: repeat(auto-fit, minmax(70px, 1fr)); }
+  .result-card .result-stats b { font-size: 16px; }
+  .result-actions { padding: 12px 18px 16px; }
+  .result-card .primary { padding: 11px 16px; }
+  .result-card .text-button { padding: 8px 16px; }
+}
+.immersive .result-card { width: min(400px, 92%); }
+@media (prefers-reduced-motion: reduce) {
+  .result-card { animation: none; }
+}
+
 
 

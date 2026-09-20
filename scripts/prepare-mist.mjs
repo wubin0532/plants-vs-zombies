@@ -101,6 +101,11 @@ if (aiMist) {
   await mist("mist-c.webp", 1024, 512, { scale: 3.1, octaves: 3, warp: 0.07, threshold: 0.48, softness: 0.42, gamma: 1.0, shade: 0.25 });
 }
 
+/** 阴天云层：比迷雾更厚重，运行时叠加冷色 tint，AI 出图可覆盖。 */
+if (redraw("overcast-cloud")) console.log("阴天云层: 已由 AI 重绘提供，跳过程序化生成");
+else
+  await mist("overcast-cloud.webp", 1024, 512, { scale: 1.0, octaves: 5, warp: 0, threshold: 0.3, softness: 0.5, gamma: 1.3, shade: 0.78 });
+
 /** 路灯暖光贴图：径向衰减的暖色光晕，渲染层用 lighter 叠加。 */
 if (redraw("glow-lantern")) console.log("路灯暖光: 已由 AI 重绘提供，跳过程序化生成");
 else {

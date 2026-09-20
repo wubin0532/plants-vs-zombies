@@ -37,7 +37,7 @@ const p = (
 });
 export const plants: PlantDef[] = [
   p("arc", "电弧花", 225, "electric", 8, "#77dfed",
-    "每 1.4 秒电击前方单体，伤害 40。命中冰系目标时消耗其冰控（同一目标 5 秒内仅触发一次），追加 60 伤害，并向同一排附近至多 3 个敌人各传导 30 伤害。", { damage: 40, interval: 1.4 }),
+    "每 1.4 秒电击前方单体，伤害 50。命中冰系目标时消耗其冰控（同一目标 5 秒内仅触发一次），追加 60 伤害，并向同一排附近至多 3 个敌人各传导 30 伤害。", { damage: 50, interval: 1.4 }),
   p(
     "pea",
     "豌豆射手",
@@ -90,7 +90,7 @@ export const plants: PlantDef[] = [
   p(
     "snowpea",
     "寒冰射手",
-    175,
+    150,
     "shooter",
     7,
     "#7ecada",
@@ -105,7 +105,7 @@ export const plants: PlantDef[] = [
     8,
     "#9d65bc",
     "咬合时吞噬敌人，厚实茎叶更耐打，随后需要时间消化。",
-    { hp: 450 },
+    { hp: 300 },
   ),
   p(
     "repeater",
@@ -125,7 +125,7 @@ export const plants: PlantDef[] = [
     11,
     "#c29be0",
     "免费的小蘑菇，攻击距离为三格。",
-    { damage: 20, interval: 1.4 },
+    { damage: 15, interval: 1.4 },
   ),
   p(
     "sunshroom",
@@ -144,7 +144,7 @@ export const plants: PlantDef[] = [
     13,
     "#a67bbd",
     "喷出穿透烟雾，越过铁栅门伤害前方近处的敌人；头盔仍需先打碎。",
-    { damage: 20, interval: 1.4 },
+    { damage: 15, interval: 1.4 },
   ),
   p(
     "grave",
@@ -168,12 +168,12 @@ export const plants: PlantDef[] = [
   p(
     "scaredy",
     "胆小菇",
-    25,
+    50,
     "shroom",
     17,
     "#c7a37a",
     "远程射击，但敌人靠近时会躲起来。",
-    { damage: 20, interval: 1.4 },
+    { damage: 15, interval: 1.4 },
   ),
   p("ice", "寒冰菇", 75, "ice", 18, "#9ed4e7", "冻结全场僵尸，随后持续减速。", {
     cooldown: 50,
@@ -208,7 +208,7 @@ export const plants: PlantDef[] = [
     23,
     "#70aa53",
     "同时攻击所在行与相邻两行，每条有效路线一颗豌豆。",
-    { damage: 20, interval: 1.4 },
+    { damage: 25, interval: 1.4 },
   ),
   p(
     "kelp",
@@ -238,7 +238,7 @@ export const plants: PlantDef[] = [
     27,
     "#b89c72",
     "持续伤害走过的僵尸，并扎破车辆。",
-    { damage: 20, interval: 1 },
+    { damage: 15, interval: 1 },
   ),
   p(
     "torch",
@@ -267,7 +267,7 @@ export const plants: PlantDef[] = [
     31,
     "#b49de3",
     "直接种在水面，攻击附近的僵尸。",
-    { damage: 20, interval: 1.4, cooldown: 30 },
+    { damage: 15, interval: 1.4, cooldown: 30 },
   ),
   p("lantern", "路灯花", 25, "light", 31, "#f4cb56", "照亮左右各两列、上下各一行；照明范围内可看清僵尸与血条。", {
     cooldown: 30,
@@ -275,7 +275,7 @@ export const plants: PlantDef[] = [
   p(
     "cactus",
     "仙人掌",
-    125,
+    100,
     "shooter",
     33,
     "#8aba65",
@@ -294,14 +294,14 @@ export const plants: PlantDef[] = [
   p(
     "split",
     "裂荚射手",
-    125,
+    100,
     "shooter",
     36,
     "#96b362",
     "前方发射一颗豌豆，后方同时发射两颗。",
     { damage: 20, interval: 1.4 },
   ),
-  p("star", "杨桃", 125, "star", 37, "#e9bf49", "向正后方与四个斜向共五个固定方向发射星星。", {
+  p("star", "杨桃", 100, "star", 37, "#e9bf49", "向正后方与四个斜向共五个固定方向发射星星。", {
     damage: 20,
     interval: 1.4,
   }),
@@ -343,7 +343,7 @@ export const plants: PlantDef[] = [
     43,
     "#e6c96a",
     "抛射玉米粒，约四分之一概率投出黄油：伤害翻倍并把僵尸定住。",
-    { damage: 20, interval: 2.8 },
+    { damage: 30, interval: 2.8 },
   ),
   p("coffee", "咖啡豆", 75, "coffee", 44, "#8c6151", "唤醒白天睡着的蘑菇。"),
   p(
@@ -382,12 +382,12 @@ export const plants: PlantDef[] = [
     49,
     "#78a359",
     "投出西瓜，对附近僵尸造成溅射伤害。",
-    { damage: 80, interval: 2.8 },
+    { damage: 90, interval: 2.8 },
   ),
   p(
     "gatling",
     "机枪射手",
-    250,
+    200,
     "shooter",
     51,
     "#5b9157",
@@ -412,7 +412,7 @@ export const plants: PlantDef[] = [
     51,
     "#8570ac",
     "升级大喷菇，攻击周围全部敌人。",
-    { upgrade: "fume", damage: 80, interval: 1.9, cooldown: 50 },
+    { upgrade: "fume", damage: 70, interval: 1.9, cooldown: 50 },
   ),
   p(
     "cattail",
@@ -422,17 +422,17 @@ export const plants: PlantDef[] = [
     51,
     "#bd9f78",
     "升级睡莲，每轮射出两枚尖刺，追踪任意路线和空中的目标。",
-    { upgrade: "lily", damage: 20, interval: 1.4, burst: 2, cooldown: 50 },
+    { upgrade: "lily", damage: 25, interval: 1.4, burst: 2, cooldown: 50 },
   ),
   p(
     "winter",
     "冰西瓜",
-    200,
+    150,
     "lob",
     51,
     "#81bccc",
     "升级西瓜投手，溅射伤害并群体减速。",
-    { upgrade: "melon", damage: 80, interval: 2.8, cooldown: 50 },
+    { upgrade: "melon", damage: 100, interval: 2.8, cooldown: 50 },
   ),
   p(
     "goldmagnet",
@@ -452,7 +452,7 @@ export const plants: PlantDef[] = [
     51,
     "#9ba2a0",
     "升级地刺，造成双倍伤害并承受多次碾压。",
-    { upgrade: "spike", hp: 900, damage: 40, interval: 1, cooldown: 50 },
+    { upgrade: "spike", hp: 900, damage: 30, interval: 1, cooldown: 50 },
   ),
   p(
     "cob",
@@ -462,7 +462,7 @@ export const plants: PlantDef[] = [
     51,
     "#b6a459",
     "占用相邻两株玉米投手，点击后选择轰炸位置。",
-    { upgrade: "kernel", hp: 600, cooldown: 50 },
+    { upgrade: "kernel", hp: 300, cooldown: 50 },
   ),
   p(
     "imitater",
@@ -502,8 +502,8 @@ const z = (
 export const zombies: ZombieDef[] = [
   z("basic", "普通僵尸", 200, 10, 0, "慢慢走来，啃食面前的植物。", "没有特殊能力，一株射手就能稳稳挡住。"),
   z("flag", "旗帜僵尸", 200, 13, 0, "举旗带领一大波僵尸进攻。", "旗帜出现预示大波进攻，提前检查每行火力。"),
-  z("cone", "路障僵尸", 200, 10, 370, "路障提供额外保护。", "打碎路障后就和普通僵尸一样，集中火力即可。"),
-  z("pole", "撑杆僵尸", 400, 27, 0, "跨过遇到的第一株矮植物。", "只会跨一次；高坚果能直接拦下这一跳。", ["tallnut"]),
+  z("cone", "路障僵尸", 270, 10, 370, "路障提供额外保护。", "打碎路障后就和普通僵尸一样，集中火力即可。"),
+  z("pole", "撑杆僵尸", 500, 27, 0, "跨过遇到的第一株矮植物。", "只会跨一次；高坚果能直接拦下这一跳。", ["tallnut"]),
   z("bucket", "铁桶僵尸", 260, 10, 1350, "铁桶非常坚固，但会被磁力菇吸走。", "磁力菇能吸走铁桶，让它立刻变脆。", ["magnet"]),
   z("paper", "读报僵尸", 200, 10, 150, "报纸破掉后，会愤怒地加速。", "报纸一破就会狂奔，提前在后方备好坚果。"),
   z(
@@ -523,25 +523,25 @@ export const zombies: ZombieDef[] = [
   z("snorkel", "潜水僵尸", 200, 15, 0, "潜水时躲避普通直射攻击。", "投手类植物能直接打中潜水的它。", ["cabbage", "kernel", "melon", "winter", "kelp"]),
   z("zomboni", "冰车僵尸", 1650, 16, 0, "碾压植物并留下不能种植的冰道。", "地刺能扎破冰车；火爆辣椒可以清除冰道。", ["spike", "spikerock", "jalapeno"]),
   z("bobsled", "雪橇僵尸小队", 800, 25, 0, "沿着冰道快速推进。", "清除冰道后，雪橇小队就失去了速度。", ["jalapeno"]),
-  z("dolphin", "海豚骑士僵尸", 400, 34, 0, "快速游动，跳过第一株矮植物。", "高坚果能拦住它的跳跃。", ["tallnut"]),
+  z("dolphin", "海豚骑士僵尸", 500, 34, 0, "快速游动，跳过第一株矮植物。", "高坚果能拦住它的跳跃。", ["tallnut"]),
   z(
     "jack",
     "玩偶匣僵尸",
-    340,
+    500,
     18,
     0,
     "随身的盒子可能爆炸并摧毁附近植物。",
     "磁力菇能吸走盒子，让它变成普通僵尸；否则尽快远程消灭。",
     ["magnet"],
   ),
-  z("balloon", "气球僵尸", 200, 12, 0, "飞过普通植物，需要防空能力应对。", "仙人掌能击落气球，三叶草可以直接吹走。", ["cactus", "blover", "cattail"]),
-  z("digger", "矿工僵尸", 270, 25, 0, "钻到庭院左侧后向右啃食。", "裂荚射手能向后攻击；磁力菇能吸走矿镐。", ["split", "magnet"]),
-  z("pogo", "跳跳僵尸", 400, 22, 0, "不断跳过矮植物，磁力菇能吸走跳杆。", "磁力菇吸走跳杆后就只能步行。", ["magnet"]),
+  z("balloon", "气球僵尸", 270, 12, 0, "飞过普通植物，需要防空能力应对。", "仙人掌能击落气球，三叶草可以直接吹走。", ["cactus", "blover", "cattail"]),
+  z("digger", "矿工僵尸", 500, 25, 0, "钻到庭院左侧后向右啃食。", "裂荚射手能向后攻击；磁力菇能吸走矿镐。", ["split", "magnet"]),
+  z("pogo", "跳跳僵尸", 500, 22, 0, "不断跳过矮植物，磁力菇能吸走跳杆。", "磁力菇吸走跳杆后就只能步行。", ["magnet"]),
   z("yeti", "雪人僵尸", 1350, 14, 0, "只在通关重玩时出现，停留后逃离。", "停留片刻就会逃跑，集中火力速战速决。"),
   z("bungee", "蹦极僵尸", 450, 0, 0, "从空中落下，偷走一株植物。", "叶子保护伞能挡下它的偷袭。", ["umbrella"]),
   z("catapult", "投石车僵尸", 850, 11, 0, "远处投篮，接近后碾压植物。", "叶子保护伞挡篮球；地刺能扎破它的车。", ["umbrella", "spike", "spikerock"]),
   z("garg", "巨人僵尸", 3800, 10, 0, "砸毁植物，半血时抛出小鬼。", "半血时会抛出小鬼，留好樱桃炸弹应对落点。", ["cherry", "jalapeno", "doom"]),
-  z("imp", "小鬼僵尸", 200, 20, 0, "体型小，移动迅速。", "会被抛到防线中段，提前在那里布置火力。"),
+  z("imp", "小鬼僵尸", 270, 20, 0, "体型小，移动迅速。", "会被抛到防线中段，提前在那里布置火力。"),
   z("boss", "僵王博士", 24000, 0, 0, "召唤僵尸、砸击并发射冰火球。", "寒冰菇熄灭火球，火爆辣椒融化冰球。", ["ice", "jalapeno"]),
   z(
     "ladder",
@@ -706,7 +706,7 @@ export function recommendCards(level: Level, unlocked: string[], slots: number):
 
 export const combatGuide = [
   { title: "冰火相克", text: "冰豌豆过一株火炬变普通豌豆，过另一株才变火球。火球与火爆辣椒解除冰控，保留黄油定身和天气减速；普通爆炸不融冰。" },
-  { title: "冰电爆发", text: "电击冰控目标额外造成 100 伤害，并向附近最多 3 个敌人各传导 40 伤害。同一目标冷却 4 秒，冷却中不消耗冰控。" },
+  { title: "冰电爆发", text: "电击冰控目标额外造成 60 伤害，并向附近最多 3 个敌人各传导 30 伤害。同一目标冷却 5 秒，冷却中不消耗冰控。" },
   { title: "护甲与目标", text: "头盔先吸收伤害；烟雾、投掷直击和投掷溅射越过铁栅门。常规溅射不伤飞行或地下敌人，投手仍能攻击潜水僵尸。" },
   { title: "困难模式战术", text: "困难难度下僵尸会按防线强度每波重算主攻行，并大概率集火最薄弱、且没有割草机的一行；投石车优先拆除该行威胁最高的植物，蹦极会直接空降到全场威胁最高的主植物格（两者都会跳过叶子保护伞）；玩偶匣会走向植物最密集的一行再自爆；撑杆、海豚、跳跳与矿工被高坚果挡住时会绕到相邻旱路一次。普通、休闲与自定义难度不受影响。" },
 ];
