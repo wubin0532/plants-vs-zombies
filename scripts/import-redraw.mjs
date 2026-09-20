@@ -351,6 +351,39 @@ async function place(buf, w, h, anchor) {
 /** 整幅底图/整幅水面不能抠背景，否则会把天空、墙面一起泛洪掉 */
 const FULL_FRAME = new Set(["fog", "night", "water-strip", "water-ripple"]);
 
+/**
+ * 正交夜景微调：把草坪精确对齐到可玩区。
+ * 只横向分段：x < 210 的房子与车道左侧原样保留；草坪与右侧整体轻微放大，
+ * 丢掉过宽的石板路右缘（210-254）；纵向整体等比微移（不产生接缝）。
+ * 数值由当前 assets-source/redraw/night.png 实测（1200×690 空间）。
+ */
+async function fitNight(buf) {
+  const W = 2400, H = 1380;
+  const { data, info } = await sharp(buf).resize(W, H, { fit: "fill" }).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const C = info.channels;
+  const LX = 254 * 2, TX = 210 * 2;      // 源草坪左缘 → 目标左缘
+  const sa = (H - 116 * 2) / (H - 131 * 2); // 纵向：草坪顶 131 → 116，底边不变
+  const sb = 116 * 2 - sa * 131 * 2;
+  const sx = (W - TX) / (W - LX);
+  const out = Buffer.alloc(W * H * 4);
+  const clamp = (v, hi) => (v < 0 ? 0 : v > hi ? hi : v);
+  for (let y = 0; y < H; y++) {
+    const srcY = (y - sb) / sa;
+    const y0 = Math.floor(clamp(srcY, H - 1)), y1 = Math.min(H - 1, y0 + 1), fy = srcY - y0;
+    for (let x = 0; x < W; x++) {
+      const srcX = x < TX ? x : LX + (x - TX) / sx;
+      const x0 = Math.floor(clamp(srcX, W - 1)), x1 = Math.min(W - 1, x0 + 1), fx = srcX - x0;
+      const o = (y * W + x) * 4;
+      for (let c = 0; c < 3; c++) {
+        const p00 = data[(y0 * W + x0) * C + c], p10 = data[(y0 * W + x1) * C + c];
+        const p01 = data[(y1 * W + x0) * C + c], p11 = data[(y1 * W + x1) * C + c];
+        out[o + c] = Math.round(p00 * (1 - fx) * (1 - fy) + p10 * fx * (1 - fy) + p01 * (1 - fx) * fy + p11 * fx * fy);
+      }
+      out[o + 3] = 255;
+    }
+  }
+  return { out: await sharp(out, { raw: { width: W, height: H, channels: 4 } }).png().toBuffer(), note: "分段对齐：草坪 254→210 / 131→116（房子与车道不动）" };
+}
 
 async function importFile(name) {
   const src = IN + name;
@@ -363,9 +396,7 @@ async function importFile(name) {
     // 月下墓园改用正交俯视出图，草坪本就对齐 210-1101 / 116-620，直接缩放即可；
     // 不再做仿射变形（变形会裁掉房子、并把割草机车道盖成草地）。
     const { out, note } =
-      stemOf(name) === "night"
-        ? { out: await sharp(buf).resize(2400, 1380, { fit: "fill" }).png().toBuffer(), note: "正交底图直接缩放 2400×1380（无变形）" }
-        : await calibrateBackground(buf, true);
+      stemOf(name) === "night" ? await fitNight(buf) : await calibrateBackground(buf, true);
     // 源图统一用 webp（q92 视觉无损），避免仓库里堆 PNG
     await writeFile(`assets-source/${stemOf(name)}.webp`, await sharp(out).webp({ quality: 92, effort: 6 }).toBuffer());
     done.push(`${name} → assets-source/${stemOf(name)}.webp (2400×1380)｜${note}`);
