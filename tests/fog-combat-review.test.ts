@@ -144,6 +144,26 @@ describe('溅射与护甲', () => {
     expect(ally.hp).toBe(ally.max); expect(dead.hp).toBe(0);
     if (type === 'winter') { expect(air.iceSlow ?? 0).toBe(0); expect(underground.iceSlow ?? 0).toBe(0); }
   });
+  it('樱桃炸弹与火爆辣椒共用目标筛选：钻地不吃爆炸，地面与飞行照常命中', () => {
+    // 樱桃（blast）：中心格 + 半径 1.5
+    const e = new Engine(11, []);
+    const burrow = target(e, 'digger', 0, 4);
+    const surface = target(e, 'basic', 0, 4);
+    const air = target(e, 'balloon', 0, 5);
+    e.blast(4, 0, 1.5);
+    expect(burrow.hp, '钻地矿工免疫爆炸').toBe(burrow.max);
+    expect(surface.hp).toBeLessThanOrEqual(0);
+    expect(air.hp).toBeLessThanOrEqual(0);
+    // 辣椒：整行，同样不吃钻地
+    const e2 = new Engine(11, []);
+    const burrow2 = target(e2, 'digger', 0, 4);
+    const surface2 = target(e2, 'basic', 0, 4);
+    const p = e2.addPlant('jalapeno', 0, 2);
+    p.age = 2;
+    run(e2, 0.1);
+    expect(burrow2.hp, '钻地矿工免疫辣椒').toBe(burrow2.max);
+    expect(surface2.hp).toBeLessThanOrEqual(0);
+  });
   it.each(['melon', 'winter'])('%s 直击与溅射都越过铁门而不越过头盔，仍可命中潜水', type => {
     const e = new Engine(11, []);
     const main = target(e, 'screen'), door = target(e, 'screen', 1);

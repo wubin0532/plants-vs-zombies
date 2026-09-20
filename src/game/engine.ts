@@ -1143,11 +1143,12 @@ export class Engine {
     source = "cherry",
   ) {
     this.effect(x, row, "boom", source);
-    for (const z of this.zombies)
+    // 与火爆辣椒共用同一套目标筛选：死亡 / 友军 / 钻地一律不吃爆炸，
+    // 飞行仍然可命中（两颗炸弹在这点上本就一致）。
+    for (const z of this.livingEnemies())
       if (
         Math.abs(z.row - row) <= radius &&
-        Math.abs(z.x - x) <= radius &&
-        !z.ally
+        Math.abs(z.x - x) <= radius
       )
         this.damage(z, damage, true);
     if (this.level.mode === "boss" && this.bossDown > 0)
