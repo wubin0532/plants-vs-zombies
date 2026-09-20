@@ -352,50 +352,6 @@ async function place(buf, w, h, anchor) {
 const FULL_FRAME = new Set(["fog", "night", "water-strip", "water-ripple"]);
 
 
-/**
- * 月下墓园专用校准：AI 夜景的草坪画成了平行四边形（左右两边都向左下斜），
- * 直接叠正交网格会斜。这里用一次仿射把这块平行四边形拉成正矩形，
- * 使其精确覆盖可玩区 210-1101 × 116-620（1200 空间；本函数在 2400×1380 上重采样）。
- * 源草坪四角按当前美术人工标定，改图时需要用 output/night-src-grid.png 重新量。
- */
-async function calibrateNight(buf) {
-  const W = 2400, H = 1380;
-  const { data, info } = await sharp(buf)
-    .resize(W, H, { fit: "fill" })
-    .removeAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-  const C = info.channels;
-  // 正向仿射 target = A·source + t 的逆矩阵与偏移（1200 空间），偏移 ×2 到 2400 空间。
-  // 草坪左边缘标定到 x=136（覆盖割草机车道 136-210），房子退到 136 以左。
-  const Ainv = [
-    [0.7979, -0.1785],
-    [-0.01554, 0.8631],
-  ];
-  const tx = -392.7, ty = -162.2;
-  const out = Buffer.alloc(W * H * 4);
-  const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
-  for (let y = 0; y < H; y++)
-    for (let x = 0; x < W; x++) {
-      const dx = x - tx, dy = y - ty;
-      const sx = clamp(Ainv[0][0] * dx + Ainv[0][1] * dy, 0, W - 1);
-      const sy = clamp(Ainv[1][0] * dx + Ainv[1][1] * dy, 0, H - 1);
-      const x0 = Math.floor(sx), y0 = Math.floor(sy);
-      const x1 = Math.min(W - 1, x0 + 1), y1 = Math.min(H - 1, y0 + 1);
-      const fx = sx - x0, fy = sy - y0;
-      const o = (y * W + x) * 4;
-      for (let c = 0; c < 3; c++) {
-        const p00 = data[(y0 * W + x0) * C + c], p10 = data[(y0 * W + x1) * C + c];
-        const p01 = data[(y1 * W + x0) * C + c], p11 = data[(y1 * W + x1) * C + c];
-        out[o + c] = Math.round(p00 * (1 - fx) * (1 - fy) + p10 * fx * (1 - fy) + p01 * (1 - fx) * fy + p11 * fx * fy);
-      }
-      out[o + 3] = 255;
-    }
-  return {
-    out: await sharp(out, { raw: { width: W, height: H, channels: 4 } }).png().toBuffer(),
-    note: "月下墓园仿射矫正：草坪 136-1101（含割草机车道） / 116-620",
-  };
-}
 async function importFile(name) {
   const src = IN + name;
   // 单体资产先做纯色底抠图（AI 出图常常带不透明底）；整幅图跳过
@@ -404,7 +360,12 @@ async function importFile(name) {
 
   // 1) 底图：写入 assets-source/，由 prepare-assets 统一缩放并用
   if (stemOf(name) === "fog" || stemOf(name) === "night") {
-    const { out, note } = stemOf(name) === "night" ? await calibrateNight(buf) : await calibrateBackground(buf, true);
+    // 月下墓园改用正交俯视出图，草坪本就对齐 210-1101 / 116-620，直接缩放即可；
+    // 不再做仿射变形（变形会裁掉房子、并把割草机车道盖成草地）。
+    const { out, note } =
+      stemOf(name) === "night"
+        ? { out: await sharp(buf).resize(2400, 1380, { fit: "fill" }).png().toBuffer(), note: "正交底图直接缩放 2400×1380（无变形）" }
+        : await calibrateBackground(buf, true);
     // 源图统一用 webp（q92 视觉无损），避免仓库里堆 PNG
     await writeFile(`assets-source/${stemOf(name)}.webp`, await sharp(out).webp({ quality: 92, effort: 6 }).toBuffer());
     done.push(`${name} → assets-source/${stemOf(name)}.webp (2400×1380)｜${note}`);
@@ -618,7 +579,11 @@ if (!existsSync(IN)) {
   console.log(`请把 AI 出图放进 ${IN}，文件名见 docs/redraw-brief.md`);
   process.exit(0);
 }
-const files = (await readdir(IN)).filter((f) => /\.(png|webp|jpg|jpeg)$/i.test(f));
+// 可选：只导入指定文件（按 stem 匹配），例如 `node scripts/import-redraw.mjs night.png`
+const only = new Set(process.argv.slice(2).map((a) => stemOf(a)));
+const files = (await readdir(IN))
+  .filter((f) => /\.(png|webp|jpg|jpeg)$/i.test(f))
+  .filter((f) => !only.size || only.has(stemOf(f)));
 if (!files.length) {
   console.log(`${IN} 里还没有图片。文件名与要求见 docs/redraw-brief.md`);
   process.exit(0);
