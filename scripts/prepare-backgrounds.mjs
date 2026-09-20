@@ -16,7 +16,10 @@ const redraw = (name) => {
   const stem = name.replace(/\.[^.]+$/, "");
   return [".webp", ".png", ".jpg", ".jpeg"].some((e) => existsSync(`assets-source/redraw/${stem}${e}`));
 };
-if (redraw("fog") && redraw("night")) {
+// 逐张判断：某一张有 AI 出图就跳过它，没出的照常程序化生成。
+const doFog = !redraw("fog");
+const doNight = !redraw("night");
+if (!doFog && !doNight) {
   console.log("夜战底图: 已由 AI 重绘提供，跳过程序化生成");
   process.exit(0);
 }
@@ -142,7 +145,7 @@ async function alignedBase(src, doAlign) {
 }
 
 /* ------------------------------- 迷雾后院 ------------------------------- */
-{
+if (doFog) {
   let img = await alignedBase(sourcePathOrThrow("assets-source/pool"), true);
   img = await nightGrade(img, { topShade: "#5a6f8c", midShade: "#8b9cb4", cool: "#31506e", sat: 0.42, bright: 0.96 });
   img = await moonlight(img, 0.30);
@@ -182,7 +185,7 @@ async function alignedBase(src, doAlign) {
 }
 
 /* ------------------------------- 月下墓园 ------------------------------- */
-{
+if (doNight) {
   let img = await alignedBase(sourcePathOrThrow("assets-source/day"), false);
   img = await nightGrade(img, { topShade: "#4b5a86", midShade: "#7f8bb0", cool: "#3a3468", sat: 0.5, bright: 0.95 });
   img = await moonlight(img, 0.34);

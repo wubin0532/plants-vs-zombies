@@ -315,7 +315,9 @@ console.log("\n== 背景（草坪 / 水带对齐）==");
 
     // 仅对"由本流水线校准过"的底图做强校验；day/pool/roof 是项目原始美术，
     // 颜色启发式在这些画面上不可靠（树冠会判成草），只作参考输出。
-    const calibrated = name === "night" || name === "fog";
+    // 只对 fog 做强校验；night 由 import-redraw 的 calibrateNight() 分段拉伸精确对齐，
+    // 夜色太暗导致颜色启发式不可靠，因此仅作参考输出。
+    const calibrated = name === "fog";
     const fmt = (s, k) => (s ? `${(s[0] * k).toFixed(0)}-${(s[1] * k).toFixed(0)}` : "未检出");
     console.log(
       `  ${name.padEnd(6)} ${calibrated ? "[强校验]" : "[参考]  "} 草坪 y ${fmt(grassY, ky)}（目标 116-620） x ${fmt(grassX, kx)}（目标 210-1101）` +
