@@ -88,7 +88,9 @@ async function stylize(raster) {
 for (const [id, body] of Object.entries(assets)) {
  if (redraw(id)) { console.log(`${id}.png: 已由 AI 重绘提供，跳过`); continue; }
  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">${defs}${body}</svg>`;
- await writeFile(`${root}/${id}.svg`,svg);
+ // 矢量源只作为本地参考保留，不写进 public（运行时只用 webp）。
+ await mkdir("assets-source/presentation-svg", { recursive: true });
+ await writeFile(`assets-source/presentation-svg/${id}.svg`,svg);
  const raster = await sharp(Buffer.from(svg)).resize(SIZE, SIZE).png().toBuffer();
  const styled = await stylize(raster);
  // 描边在高分辨率算好后缩回 128，保持原有资源契约（128×128、左上角全透明）。

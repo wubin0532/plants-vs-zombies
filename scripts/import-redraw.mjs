@@ -509,10 +509,17 @@ async function importFile(name) {
     return;
   }
   // 6f) 可选 UI 图标（彩色 + 单色）
-  if (/^ui-/.test(stemOf(name)) && (/^(ui-speed|ui-pause|ui-fullscreen)(-mono)?$/.test(stemOf(name)))) {
+  if (/^ui-/.test(stemOf(name))) {
     const placed = await place(await trim(buf), 512, 512, "center");
     await sharp(placed).webp({ quality: 92 }).toFile(`public/assets/icons/${stemOf(name)}.webp`);
     done.push(`${name} → public/assets/icons/ (512×512)`);
+    return;
+  }
+  // 6g) 保龄球（冰 / 电）：160×160
+  if (stemOf(name) === "b-ice" || stemOf(name) === "b-electric") {
+    const placed = await place(await trim(buf), 160, 160, "center");
+    await sharp(placed).webp({ quality: 92 }).toFile(`public/assets/portraits/${stemOf(name)}.webp`);
+    done.push(`${name} → public/assets/portraits/ (160×160)`);
     return;
   }
   // 6) Token
@@ -520,6 +527,18 @@ async function importFile(name) {
     const placed = await place(await trim(buf), 96, 96, "center");
     await sharp(placed).webp({ quality: 92 }).toFile(`public/assets/tokens/${stemOf(name)}.webp`);
     done.push(`${name} → public/assets/tokens/ (96×96)`);
+    return;
+  }
+  // 6h) 主页功能卡图标：128×128
+  if (/^feature-(map|almanac|daily)$/.test(stemOf(name))) {
+    const placed = await place(await trim(buf), 128, 128, "center");
+    await sharp(placed).webp({ quality: 92 }).toFile(`public/assets/icons/${stemOf(name)}.webp`);
+    done.push(`${name} → public/assets/icons/ (128×128)`);
+    return;
+  }
+  // 6i) App Logo：整幅方图，交给 prepare-icons.mjs 派生各尺寸
+  if (stemOf(name) === "app-logo") {
+    done.push(`${name} → assets-source/redraw/（由 prepare-icons.mjs 生成应用图标）`);
     return;
   }
   // 7) 表现插图：128×128 居中，强制左上角透明

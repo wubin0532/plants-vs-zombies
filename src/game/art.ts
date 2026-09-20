@@ -40,7 +40,10 @@ export const tokenImage = (kind: "token-sun" | "token-coin") =>
   assetUrl(`assets/tokens/${kind}.webp`);
 
 export const bowlImage = (element: "ice" | "electric") =>
-  assetUrl(`assets/portraits/b-${element}.svg`);
+  assetUrl(`assets/portraits/b-${element}.webp`);
+/** 主页功能卡图标。 */
+export const featureImage = (kind: "map" | "almanac" | "daily") =>
+  assetUrl(`assets/icons/feature-${kind}.webp`);
 
 /** UI 图标（AI 重绘，见 docs/ui-icon-prompts.md）：暂停菜单、工具、设置等。 */
 export type UiIconName =
@@ -60,5 +63,19 @@ export type UiIconName =
 export const uiIcon = (name: UiIconName) =>
   assetUrl(`assets/icons/ui-${name}.webp`);
 /** 单色剪影图标：供 CSS mask 使用，可随按钮文字色自动变色。 */
-export const uiIconMono = (name: "speed" | "pause" | "fullscreen") =>
-  assetUrl(`assets/icons/ui-${name}-mono.webp`);
+export const uiIconMono = (
+  name:
+    | "resume"
+    | "restart"
+    | "home"
+    | "shovel"
+    | "transplant"
+    | "settings"
+    | "menu"
+    | "sound-on"
+    | "sound-off"
+    | "exit-fullscreen"
+    | "fullscreen"
+    | "pause"
+    | "speed",
+) => assetUrl(`assets/icons/ui-${name}-mono.webp`);

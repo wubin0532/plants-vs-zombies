@@ -27,10 +27,11 @@ import {
   gardenImage,
   bowlImage,
   tokenImage,
-  uiIcon,
   uiIconMono,
+  featureImage,
   assetUrl,
 } from "./game/art";
+import { spriteFootOffsetPct } from "./game/sprite-anchor.generated";
 import { battleSettings, defaultOptions } from "./game/difficulty";
 import { applyDailyMods, dailyChallenge } from "./game/daily";
 import { achievementDefs, checkAchievements } from "./achievements";
@@ -51,9 +52,13 @@ const save = useSave();
 const auth = useAuth();
 const weatherIcon = assetUrl("assets/weather/icon-weather.webp");
 // 单色图标走 CSS mask：背景用 currentColor，颜色自动跟随按钮文字。
-const monoIcon = (name: "speed" | "pause" | "fullscreen"): Record<string, string> => ({
+const monoIcon = (name: Parameters<typeof uiIconMono>[0]): Record<string, string> => ({
   maskImage: `url(${uiIconMono(name)})`,
   WebkitMaskImage: `url(${uiIconMono(name)})`,
+});
+// 立绘/卡片脚底水平回正：--foot 是偏移占画布宽的百分比，CSS 取负平移。
+const anchorStyle = (key: string): Record<string, string> => ({
+  "--foot": String(spriteFootOffsetPct[key] ?? 0),
 });
 save.load();
 {
@@ -1219,7 +1224,7 @@ onBeforeUnmount(() => {
             if (engine) engine.paused = true;
           "
         >
-          <img class="gear-icon" :src="uiIcon('settings')" alt="" />
+          <span class="gear-icon mask-icon" :style="monoIcon('settings')" aria-hidden="true"></span>
         </button>
       </div>
     </header>
@@ -1288,13 +1293,13 @@ onBeforeUnmount(() => {
         </section>
         <section class="home-bottom">
           <button class="feature-card" @click="modal = 'map'">
-            <span class="feature-art map-art">⌁</span
+            <span class="feature-art"><img :src="featureImage('map')" alt="" /></span
             ><span
               ><small>THE ADVENTURE</small><strong>一场穿越日夜的冒险</strong>
               <p>从阳光草坪，到月色下的红瓦屋顶。</p></span
             ><b>↗</b></button
           ><button class="feature-card" @click="modal = 'almanac'">
-            <span class="feature-art"><img :src="pa('puff')" alt="" /></span
+            <span class="feature-art"><img :src="featureImage('almanac')" alt="" /></span
             ><span
               ><small>MEET THE NEIGHBORS</small
               ><strong>认识你的庭院伙伴</strong>
@@ -1302,7 +1307,7 @@ onBeforeUnmount(() => {
             ><b>↗</b>
           </button>
           <button class="feature-card" @click="startDaily">
-            <span class="feature-art map-art">✦</span
+            <span class="feature-art"><img :src="featureImage('daily')" alt="" /></span
             ><span
               ><small>DAILY CHALLENGE</small><strong>每日挑战</strong>
               <p>
@@ -1648,33 +1653,29 @@ onBeforeUnmount(() => {
           </div>
           <div class="game-controls">
             <button class="plain" @click="sound">
-              <img
-                class="ctl-icon"
-                :src="uiIcon(save.data.sound ? 'sound-on' : 'sound-off')"
-                alt=""
-              />音效：{{ save.data.sound ? "开" : "关" }}</button
+              <span
+                class="ctl-icon mask-icon"
+                :style="monoIcon(save.data.sound ? 'sound-on' : 'sound-off')"
+                aria-hidden="true"
+              ></span>音效：{{ save.data.sound ? "开" : "关" }}</button
             ><button class="plain" @click="speed">
               <span class="ctl-icon mask-icon" :style="monoIcon('speed')" aria-hidden="true"></span>速度：{{
                 engine?.timeScale === 2 ? "2x" : "1x"
               }}</button
             ><button class="plain" @click="fullscreen">
               <span
-                v-if="!full"
                 class="ctl-icon mask-icon"
-                :style="monoIcon('fullscreen')"
+                :style="monoIcon(full ? 'exit-fullscreen' : 'fullscreen')"
                 aria-hidden="true"
-              ></span
-              ><img v-else class="ctl-icon" :src="uiIcon('exit-fullscreen')" alt="" />全屏</button
+              ></span>全屏</button
             ><button v-if="dailyMode" class="plain" @click="rerollDaily">
-              <img class="ctl-icon" :src="uiIcon('restart')" alt="" />换一局</button
+              <span class="ctl-icon mask-icon" :style="monoIcon('restart')" aria-hidden="true"></span>换一局</button
             ><button class="plain" @click="pause">
               <span
-                v-if="!stats.paused"
                 class="ctl-icon mask-icon"
-                :style="monoIcon('pause')"
+                :style="monoIcon(stats.paused ? 'resume' : 'pause')"
                 aria-hidden="true"
-              ></span
-              ><img v-else class="ctl-icon" :src="uiIcon('resume')" alt="" />{{
+              ></span>{{
                 stats.paused ? "继续游戏" : "暂停游戏"
               }}
             </button>
@@ -1694,7 +1695,7 @@ onBeforeUnmount(() => {
             aria-label="战斗菜单"
             @click="pause"
           >
-            <img class="menu-icon" :src="uiIcon('menu')" alt="" />
+            <span class="menu-icon mask-icon" :style="monoIcon('menu')" aria-hidden="true"></span>
           </button>
           <div class="seed-tray">
             <div class="sun-counter">
@@ -1727,7 +1728,13 @@ onBeforeUnmount(() => {
                 :aria-pressed="stats.selected === id"
               >
                 <span class="key">{{ (i + 1) % 10 }}</span
-                ><img draggable="false" :src="seedPortrait(id)" :alt="seedName(id)" /><span>{{
+                ><img
+                  class="anchor-img"
+                  draggable="false"
+                  :src="seedPortrait(id)"
+                  :style="anchorStyle('p-' + id)"
+                  :alt="seedName(id)"
+                /><span>{{
                   seedName(id)
                 }}</span
                 ><strong>{{
@@ -1755,13 +1762,13 @@ onBeforeUnmount(() => {
               :class="{ selected: stats.selected === 'shovel' }"
               @click="selectSeed('shovel')"
             >
-              <img class="shovel-icon" :src="uiIcon('shovel')" alt="" />
+              <span class="shovel-icon mask-icon" :style="monoIcon('shovel')" aria-hidden="true"></span>
               <span>铲子</span>
             </button>
             <button v-if="engine?.toolsUnlocked" class="garden-tool" :class="{ selected: stats.selected === 'tool' }"
               :aria-pressed="stats.selected === 'tool'" :disabled="stats.toolUses === 0 || stats.paused"
               :title="stats.toolHint" @click="useGardenTool">
-              <img class="tool-icon" :src="uiIcon('transplant')" alt="" />
+              <span class="tool-icon mask-icon" :style="monoIcon('transplant')" aria-hidden="true"></span>
               <span>{{ stats.selected === 'tool' ? '取消' : engine.toolName }}</span><strong>{{ stats.toolUses }} / 3</strong><small>T · 工具</small>
             </button>
           </div>
@@ -1809,34 +1816,34 @@ onBeforeUnmount(() => {
                 <h2>庭院，等你回来。</h2>
                 <p>植物和僵尸都暂停了，放心休息一下。</p>
                 <button v-if="full" class="plain" @click="sound">
-                  <img
-                    class="btn-icon"
-                    :src="uiIcon(save.data.sound ? 'sound-on' : 'sound-off')"
-                    alt=""
-                  />
+                  <span
+                    class="btn-icon mask-icon"
+                    :style="monoIcon(save.data.sound ? 'sound-on' : 'sound-off')"
+                    aria-hidden="true"
+                  ></span>
                   <span class="btn-label">{{
                     save.data.sound ? "关闭声音" : "打开声音"
                   }}</span>
                 </button>
                 <button v-if="full" class="plain" @click="exitBattleFullscreen">
-                  <img
-                    class="btn-icon"
-                    :src="uiIcon('exit-fullscreen')"
-                    alt=""
-                  />
+                  <span
+                    class="btn-icon mask-icon"
+                    :style="monoIcon('exit-fullscreen')"
+                    aria-hidden="true"
+                  ></span>
                   <span class="btn-label">退出全屏</span>
                 </button>
                 <button class="primary" @click="pause">
-                  <img class="btn-icon" :src="uiIcon('resume')" alt="" />
+                  <span class="btn-icon mask-icon" :style="monoIcon('resume')" aria-hidden="true"></span>
                   <span class="btn-label">继续守护</span>
                   <span class="btn-arrow" aria-hidden="true">→</span>
                 </button>
                 <button class="plain" @click="start">
-                  <img class="btn-icon" :src="uiIcon('restart')" alt="" />
+                  <span class="btn-icon mask-icon" :style="monoIcon('restart')" aria-hidden="true"></span>
                   <span class="btn-label">重新开始本关</span>
                 </button>
                 <button class="text-button" @click="home">
-                  <img class="btn-icon" :src="uiIcon('home')" alt="" />
+                  <span class="btn-icon mask-icon" :style="monoIcon('home')" aria-hidden="true"></span>
                   <span class="btn-label">返回主菜单</span>
                 </button>
               </div>
@@ -1851,6 +1858,8 @@ onBeforeUnmount(() => {
                 <header class="result-head">
                   <span class="result-portrait"
                     ><img
+                      class="anchor-img"
+                      :style="anchorStyle(result === 'won' ? 'p-sunflower' : 'z-basic')"
                       :src="result === 'won' ? pa('sunflower') : za('basic')"
                       :alt="result === 'won' ? '向日葵' : '僵尸'"
                   /></span>
@@ -2164,6 +2173,8 @@ onBeforeUnmount(() => {
               :key="item.id"
             >
               <img
+                class="anchor-img"
+                :style="anchorStyle(tab === 'plants' ? 'p-' + item.id : 'z-' + item.id)"
                 :src="tab === 'plants' ? pa(item.id) : za(item.id)"
                 :alt="item.name"
               />

@@ -1879,6 +1879,8 @@ body.font-large .in-game .modal {
   object-fit: contain;
   flex: none;
 }
+/* 脚底水平回正：--foot 为偏移占画布宽的百分比（见 sprite-anchor.generated.ts）。 */
+.anchor-img { transform: translateX(calc(var(--foot, 0) * -1%)); }
 .almanac-grid h3 {
   font-size: 12px;
   margin: 6px 0;
@@ -2817,6 +2819,7 @@ input[type="range"] {
   line-height: 40px;
   transform: rotate(180deg);
 }
+.shovel-icon.mask-icon { width: 26px; height: 26px; transform: rotate(180deg); }
 @media (max-width: 700px) {
   .custom-difficulty {
     grid-template-columns: 1fr 1fr;

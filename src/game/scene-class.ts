@@ -210,7 +210,8 @@ export class GardenScene extends Phaser.Scene {
     this.load.spritesheet("rain-splash", weatherImage("rain-splash"), { frameWidth: 128, frameHeight: 128 });
     this.load.spritesheet("water-splash", weatherImage("water-splash"), { frameWidth: 128, frameHeight: 128 });
     this.load.spritesheet("wind-leaves", weatherImage("wind-leaves"), { frameWidth: 128, frameHeight: 128 });
-    for (const kind of ["heat-shimmer", "cloud-shadow", "frost", "water-caustics", "blackout-glow", "sun-flare", "snow-tile", "eclipse-mask"] as const)
+    // snow-tile / eclipse-mask 为未来天气预留，暂不预加载。
+    for (const kind of ["heat-shimmer", "cloud-shadow", "frost", "water-caustics", "blackout-glow", "sun-flare"] as const)
       this.load.image("wx-" + kind, weatherImage(kind));
     for (const kind of ["token-sun", "token-coin"] as const)
       this.load.image(kind, tokenImage(kind));
