@@ -176,6 +176,9 @@ export class GardenScene extends Phaser.Scene {
   keep = new Set<string>();
   hover!: Phaser.GameObjects.Rectangle;
   cursorBox!: Phaser.GameObjects.Rectangle;
+  /** 草坪网格：平时隐藏，只有选卡/放置时淡入。 */
+  lawnGrid!: Phaser.GameObjects.Graphics;
+  lawnGridAlpha = 0;
   ghost!: Phaser.GameObjects.Image;
   acc = 0;
   previous = new Map<number, { x: number; row: number; h: number }>();
@@ -353,6 +356,8 @@ export class GardenScene extends Phaser.Scene {
         BOARD.left + c * BOARD.cell,
         BOARD.top + BOARD.lawnHeight,
       );
+    // 草坪网格平时 alpha=0，由 update() 按选中状态淡入/淡出。
+    this.lawnGrid = grid.setAlpha(0);
     this.graphics = this.add.graphics().setDepth(80);
     this.weather = this.add.graphics().setDepth(100.5);
     this.mist = new FogRenderer(this);
@@ -601,6 +606,11 @@ export class GardenScene extends Phaser.Scene {
           : "";
       this.cursorBox.setStrokeStyle(3, reason ? 0xe05545 : 0xfff1b0, 0.95);
     }
+    // 草坪网格只在选卡/放置时淡入，平时（尤其夜景）保持画面干净。
+    const gridTarget = !e.paused && e.status === "playing" && !!e.selected ? 1 : 0;
+    this.lawnGridAlpha += (gridTarget - this.lawnGridAlpha) * Math.min(1, delta / 140);
+    if (Math.abs(this.lawnGridAlpha - gridTarget) < 0.01) this.lawnGridAlpha = gridTarget;
+    this.lawnGrid.setAlpha(this.lawnGridAlpha).setVisible(this.lawnGridAlpha > 0.01);
     if (_time - this.lastNotify > 80) {
       this.notify();
       this.lastNotify = _time;
