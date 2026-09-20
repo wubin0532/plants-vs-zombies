@@ -367,11 +367,12 @@ async function calibrateNight(buf) {
     .toBuffer({ resolveWithObject: true });
   const C = info.channels;
   // 正向仿射 target = A·source + t 的逆矩阵与偏移（1200 空间），偏移 ×2 到 2400 空间。
+  // 草坪左边缘标定到 x=136（覆盖割草机车道 136-210），房子退到 136 以左。
   const Ainv = [
-    [0.8639, -0.1786],
-    [-0.01683, 0.8631],
+    [0.7979, -0.1785],
+    [-0.01554, 0.8631],
   ];
-  const tx = -193.8, ty = -162.2;
+  const tx = -392.7, ty = -162.2;
   const out = Buffer.alloc(W * H * 4);
   const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
   for (let y = 0; y < H; y++)
@@ -392,7 +393,7 @@ async function calibrateNight(buf) {
     }
   return {
     out: await sharp(out, { raw: { width: W, height: H, channels: 4 } }).png().toBuffer(),
-    note: "月下墓园仿射矫正：平行四边形草坪 → 210-1101 / 116-620",
+    note: "月下墓园仿射矫正：草坪 136-1101（含割草机车道） / 116-620",
   };
 }
 async function importFile(name) {
