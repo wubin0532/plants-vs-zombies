@@ -22,13 +22,35 @@ export function syncedAtKeyFor(profile: string): string {
   return LEGACY_SYNCED_KEY + "::" + profile;
 }
 
-/** 当前活跃归属；未设置或读取失败时回退访客档。 */
+/**
+ * 当前活跃归属；未设置或读取失败时回退访客档。
+ *
+ * localStorage 是跨标签共享的，可能在别处被改写；而 store 内存里的 profile 才是
+ * 本标签页的权威归属。只读 localStorage 会让 replay.ts 这类纯读取方在「内存归属
+ * 已切换、跨标签 storage 事件还没到」的窗口里读到别的槽，因此 store 已挂载时
+ * 一律以它为准（不在这里 import store，避免与 store 形成循环依赖）。
+ */
 export function readActiveProfile(): string {
+  const live = liveProfile();
+  if (live) return live;
   try {
     if (typeof localStorage === "undefined") return GUEST_PROFILE;
     return localStorage.getItem(ACTIVE_PROFILE_KEY) || GUEST_PROFILE;
   } catch {
     return GUEST_PROFILE;
+  }
+}
+
+/** 由 store 侧注册的「当前内存归属」取值器；未挂载 store 时为 undefined。 */
+let liveProfileReader: (() => string | undefined) | undefined;
+export function setLiveProfileReader(reader: () => string | undefined): void {
+  liveProfileReader = reader;
+}
+function liveProfile(): string | undefined {
+  try {
+    return liveProfileReader?.();
+  } catch {
+    return undefined;
   }
 }
 

@@ -48,6 +48,11 @@ import {
   useSave,
 } from "./store";
 import { useAuth } from "./auth";
+import {
+  ACTIVE_PROFILE_KEY,
+  GUEST_PROFILE,
+  saveKeyFor,
+} from "./save-keys";
 const save = useSave();
 const auth = useAuth();
 const weatherIcon = assetUrl("assets/weather/icon-weather.webp");
@@ -495,9 +500,7 @@ function buy(item: (typeof shopItems)[number]) {
 }
 function buySeedSlot() {
   if (seedSlotsFull.value || save.data.coins < seedSlotPrice.value) return;
-  save.data.coins -= seedSlotPrice.value;
-  save.data.seedSlots += 1;
-  save.persist();
+  if (!save.buySeedSlot(seedSlotPrice.value)) return;
   audio.play("sun");
   markBought("seed-slot");
 }
@@ -589,19 +592,13 @@ async function start() {
     if (engine.value.replay) engine.value.replayAttempt = nextReplayAttempt(levelId.value);
     engine.value.imitate = imitate.value;
     engine.value.toolsUnlocked ||= save.data.unlocked >= 5;
-    const items = save.data.items;
-    let usedItem = false;
-    if ((items["sun-boost"] ?? 0) > 0) {
-      items["sun-boost"]--;
-      engine.value.sun += 75;
-      usedItem = true;
-    }
-    if ((items["spare-mower"] ?? 0) > 0 && engine.value.settings.mowers) {
-      items["spare-mower"]--;
-      engine.value.spareMowers.fill(true);
-      usedItem = true;
-    }
-    if (usedItem) save.persist();
+    // 开局道具消耗统一走 store，以便累计消耗记账（云合并据此区分「没赚到」和「已花掉」）。
+    const spareMowerWanted = engine.value.settings.mowers;
+    const used = save.consumeItems(
+      spareMowerWanted ? ["sun-boost", "spare-mower"] : ["sun-boost"],
+    );
+    if (used.includes("sun-boost")) engine.value.sun += 75;
+    if (used.includes("spare-mower")) engine.value.spareMowers.fill(true);
 
     settled = false;
     result.value = "";
@@ -1011,6 +1008,20 @@ watch(full, (value) => {
   document.body.classList.toggle("battle-fullscreen", value);
   void nextTick().then(() => window.dispatchEvent(new Event("resize")));
 });
+/**
+ * 会话失效（任意接口 401）时 api 层只会清掉 auth.user，存档归属却会留在旧账号上，
+ * 于是 persist() 继续往 u_<旧账号> 槽里写，界面却显示"未登录"。这里在登录态从
+ * 有到无时切回访客档，让界面与落盘归属一致。
+ */
+let hadUser = !!auth.user;
+watch(
+  () => auth.user,
+  (user) => {
+    const had = hadUser;
+    hadUser = !!user;
+    if (had && !user) save.exitProfile();
+  },
+);
 watchEffect(() => {
   document.body.classList.toggle("high-contrast", save.data.contrast);
   document.body.classList.toggle("font-small", save.data.fontSize === "small");
@@ -1060,6 +1071,27 @@ function visibility() {
     audio.stop();
     tick.value++;
   }
+}
+/**
+ * 另一个标签页写入了存档时，把本标签页的内存态合并到最新。
+ *
+ * 不做这一步，本标签页会一直停留在旧进度上，下一次任意 persist（例如只改音量）
+ * 就会把对方刚写的通关记录合并回退——访客档没有云端兜底，等于永久丢档。
+ * 归属槽被换掉（另开标签页切了账号）时同样需要重新载入。
+ */
+function onStorage(e: StorageEvent) {
+  if (e.storageArea && e.storageArea !== localStorage) return;
+  if (e.key === ACTIVE_PROFILE_KEY) {
+    if (e.newValue === null) return;
+    const next = e.newValue || GUEST_PROFILE;
+    if (next === save.profile) return;
+    // 本标签页自己的登录态优先：不属于当前身份的归属不跟过去，避免串档。
+    if (auth.loggedIn && auth.user?.id !== next) return;
+    if (!auth.loggedIn && next !== GUEST_PROFILE) return;
+    save.load(next);
+    return;
+  }
+  if (e.key === saveKeyFor(save.profile)) save.reloadFromStorage();
 }
 function keyboard(e: KeyboardEvent) {
   // 弹窗打开时：Tab 循环限制在弹窗内；Esc 关闭弹窗（输入框内除外，保持原有提前返回）。
@@ -1153,6 +1185,7 @@ onMounted(() => {
     /* Optional browser API. */
   }
   window.addEventListener("keydown", keyboard);
+  window.addEventListener("storage", onStorage);
 });
 onBeforeUnmount(() => {
   gameGeneration++;
@@ -1163,6 +1196,7 @@ onBeforeUnmount(() => {
   closeDemo();
   audio.dispose();
   stopTipTimer();
+  window.removeEventListener("storage", onStorage);
   document.removeEventListener("visibilitychange", visibility);
   document.removeEventListener("fullscreenchange", fullscreenChanged);
   window.removeEventListener("orientationchange", syncViewport);
@@ -2411,7 +2445,8 @@ onBeforeUnmount(() => {
                   authMode === 'login' ? 'current-password' : 'new-password'
                 "
                 maxlength="128"
-                placeholder="至少 4 位"
+                :minlength="authMode === 'register' ? 8 : undefined"
+                placeholder="至少 8 位"
             /></label>
             <p v-if="auth.error" role="status" class="notice">
               {{ auth.error }}
@@ -2420,7 +2455,13 @@ onBeforeUnmount(() => {
               <button
                 class="primary"
                 type="submit"
-                :disabled="auth.busy || !authName || authPassword.length < 4"
+                :disabled="
+                  auth.busy ||
+                  !authName ||
+                  (authMode === 'register'
+                    ? authPassword.length < 8
+                    : authPassword.length < 1)
+                "
               >
                 {{
                   auth.busy

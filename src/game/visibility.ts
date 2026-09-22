@@ -12,8 +12,12 @@ export function fogActive(e: FogState) {
  * After card selection the mist creeps in from the right edge (col 9) and
  * settles at FOG_FINAL_FRONT, pale at its left edge and dense on the right.
  * Shared by the renderer and the zombie visibility check so both agree.
+ *
+ * 14 秒铺满：原来 25 秒时玩家在前半分钟几乎感觉不到「雾在推进」，而僵尸早已走到
+ * 前线，观感更像「画面变灰」而不是「雾压过来」。14 秒既看得出过程，又能在第一波
+ * 接战前成形。
  */
-export const FOG_SPREAD_SECONDS = 25;
+export const FOG_SPREAD_SECONDS = 14;
 export const FOG_FINAL_FRONT = 3.15;
 export function fogFront(e: FogState) {
   const progress = Math.min(1, Math.max(0, e.time / FOG_SPREAD_SECONDS));

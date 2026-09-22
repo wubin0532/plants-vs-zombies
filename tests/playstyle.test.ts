@@ -63,7 +63,7 @@ describe("金币入账", () => {
 describe("存档损坏提示", () => {
   beforeEach(() => setActivePinia(createPinia()));
   afterEach(() => vi.unstubAllGlobals());
-  it("本地存档无法解析时设置警告，且不覆盖内存中的进度", () => {
+  it("本地存档无法解析时重置内存态并给出警告（不残留上一份进度）", () => {
     const stored = new Map([["pvz-garden-save-v1", "{oops"]]);
     vi.stubGlobal("localStorage", {
       getItem: (k: string) => stored.get(k) ?? null,
@@ -73,7 +73,10 @@ describe("存档损坏提示", () => {
     const save = useSave();
     save.data.coins = 500;
     save.load();
-    expect(save.data.coins).toBe(500);
+    // 损坏时必须真正重置：否则残留的 500 会在下一次 persist 时被写进当前归属的槽，
+    // 造成跨账号进度泄漏。
+    expect(save.data.coins).toBe(0);
+    expect(save.data.completed).toEqual([]);
     expect(save.warning).toContain("本地存档损坏");
   });
   it("persist 写入失败时设置警告", () => {

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Engine } from '../src/game/engine';
 import { applyControl } from '../src/game/elements';
-import { fogActive, foggedAt } from '../src/game/visibility';
+import { fogActive, foggedAt, FOG_SPREAD_SECONDS } from '../src/game/visibility';
 import { levels, plants, plantById, recommendCards } from '../src/game/content';
 import { cellAt, cellX, cellY } from '../src/game/layout';
 
@@ -71,14 +71,20 @@ describe('章节与照明', () => {
     for (const time of [0, .99, 1, 8, 8.99, 9]) { e.time = time; expect(fogActive(e)).toBe(true); }
     expect(fogActive(new Engine(31, []))).toBe(true);
   });
-  it('迷雾选卡后从右往左动态蔓延，25 秒后铺满', () => {
+  it('迷雾选卡后从右往左动态蔓延，FOG_SPREAD_SECONDS 秒后铺满', () => {
     const e = new Engine(31, []);
     // 开局迷雾尚未进场，最右侧也看得清
     expect(foggedAt(e, 0, 8.9)).toBe(false);
-    e.time = 12.5; // 蔓延过半，前锋约在 col 6.1
+    // 蔓延过半：14 秒口径下 t=7 的前锋约在 col 6.1
+    e.time = 7;
     expect(foggedAt(e, 0, 7)).toBe(true);
     expect(foggedAt(e, 0, 6)).toBe(false);
-    e.time = 25; // 完全蔓延后回到 3.5 边界
+    // 完全蔓延后回到 3.5 边界
+    e.time = FOG_SPREAD_SECONDS;
+    expect(foggedAt(e, 0, 3.49)).toBe(false);
+    expect(foggedAt(e, 0, 3.5)).toBe(true);
+    // 再等下去边界不再移动（终值稳定）
+    e.time = FOG_SPREAD_SECONDS + 30;
     expect(foggedAt(e, 0, 3.49)).toBe(false);
     expect(foggedAt(e, 0, 3.5)).toBe(true);
   });

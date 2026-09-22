@@ -18,7 +18,7 @@ import {
   plantMotionFrame,
   articulatedPlants,
   plantHeadPose,
-  zombiePose,
+  zombieMotionInto,
 } from "./animation";
 import { plantScale, zombieScale } from "./proportions";
 import { tokenPose, weatherOpacity, WIND_DURATION, OVERCAST_DURATION, BLAZING_DURATION, BLACKOUT_DURATION } from "./ambient";
@@ -172,7 +172,10 @@ export class GardenScene extends Phaser.Scene {
   heatLayer!: Phaser.GameObjects.TileSprite;
   sunFlare!: Phaser.GameObjects.Image;
   blackout!: Phaser.GameObjects.Image;
-  terrainKey = "";
+  /** 上一次渲染用的地块版本号（-1 保证首帧一定重建缓存）。 */
+  terrainVersion = -1;
+  /** 复用同一对象承载僵尸姿态，避免每只僵尸每帧分配。 */
+  private poseScratch = { angle: 0, lift: 0 };
   keep = new Set<string>();
   hover!: Phaser.GameObjects.Rectangle;
   cursorBox!: Phaser.GameObjects.Rectangle;
@@ -627,9 +630,9 @@ export class GardenScene extends Phaser.Scene {
 
     drawWeather(this.weather, e.time, e.windUntil, e.rainUntil, e.overcastUntil, e.blazingUntil, this.options.quality?.() || "high");
     this.updateWeatherLayers(e);
-    const terrainKey = e.tiles.map(t => `${t.type}:${t.row}:${t.col}`).join("|");
-    if (terrainKey !== this.terrainKey) {
-      this.terrainKey = terrainKey;
+    // 地块外观只在增删时改变：用引擎的版本号判断，不再逐帧拼字符串比对。
+    if (e.tilesVersion !== this.terrainVersion) {
+      this.terrainVersion = e.tilesVersion;
       const cache = this.terrainCache.clear();
       for (const tile of e.tiles) {
         const x = this.x(tile.col), y = this.y(tile.row);
@@ -845,7 +848,8 @@ export class GardenScene extends Phaser.Scene {
         .setOrigin(0.5, appearance.origin)
         .setFlipX(z.reverse)
         .setAlpha(z.underground ? 0.25 : fogged ? 0.92 : 1);
-      const pose = zombiePose(z);
+      // 写进复用的 scratch：每只僵尸每帧取角度/抬升不应产生对象。
+      const pose = zombieMotionInto(z, this.poseScratch);
       const extraPose = zombieVisualPose(z);
       obj.setAngle(pose.angle + extraPose.angle);
       obj.y += extraPose.offsetY;
@@ -1155,7 +1159,7 @@ export class GardenScene extends Phaser.Scene {
             .setDisplaySize(appearance.width * scale, appearance.height * scale)
             .setOrigin(0.5, appearance.origin)
             .setFlipX(z.reverse)
-            .setAngle(zombiePose(z).angle + t * 78 * (z.reverse ? -1 : 1))
+            .setAngle(zombieMotionInto(z, this.poseScratch).angle + t * 78 * (z.reverse ? -1 : 1))
             .setAlpha(1 - t);
         } else
           this.sprite(key, "z-" + fx.source, x, y + 15, 78, 98, 65)
@@ -1196,26 +1200,16 @@ export class GardenScene extends Phaser.Scene {
             .setAngle(i * 60 + t * 90);
         }
     }
-    const drawMower = (key: string, x: number, row: number, spare = false, moving = false) => {
-      keep.add(key);
-      const size = spare ? 57 : 82;
-      this.sprite(key, "mower", x, feetY(row, e.level.rows) - (spare ? 30 : 0),
-        size, size * 0.75, 81)
-        .setFrame(moving ? Math.floor(e.time * 28) % 4 : 0)
-        .setDisplaySize(size, size * 0.75)
-        .setOrigin(0.5, 89 / 96)
-        .setAlpha(spare ? 0.72 : 1);
-    };
     for (let r = 0; r < e.level.rows; r++) {
-      if (e.spareMowers[r]) drawMower("mower-spare-" + r, BOARD.mowerX - 8, r, true);
-      if (e.mowers[r]) drawMower("mower-ready-" + r, BOARD.mowerX, r);
+      if (e.spareMowers[r]) this.drawMower(e, "mower-spare-" + r, BOARD.mowerX - 8, r, true);
+      if (e.mowers[r]) this.drawMower(e, "mower-ready-" + r, BOARD.mowerX, r);
     }
     // Safety feedback must survive the cosmetic effect budget on crowded waves.
     for (const fx of e.effects) {
       if (fx.type !== "mower") continue;
       const progress = 1 - fx.life / fx.duration;
       const x = BOARD.mowerX + (BOARD.width + 60 - BOARD.mowerX) * progress * progress;
-      drawMower("mower-run-" + fx.uid, x, fx.row, false, true);
+      this.drawMower(e, "mower-run-" + fx.uid, x, fx.row, false, true);
     }
     if (e.level.mode === "boss") {
       const key = "boss";
@@ -1306,6 +1300,24 @@ export class GardenScene extends Phaser.Scene {
         this.waterSplash.setFrame(Math.floor(t * 5) % 4);
       }
     }
+  }
+  /** 小推车绘制：提到类方法而不是每帧重建闭包。 */
+  private drawMower(
+    e: Engine,
+    key: string,
+    x: number,
+    row: number,
+    spare = false,
+    moving = false,
+  ) {
+    this.keep.add(key);
+    const size = spare ? 57 : 82;
+    this.sprite(key, "mower", x, feetY(row, e.level.rows) - (spare ? 30 : 0),
+      size, size * 0.75, 81)
+      .setFrame(moving ? Math.floor(e.time * 28) % 4 : 0)
+      .setDisplaySize(size, size * 0.75)
+      .setOrigin(0.5, 89 / 96)
+      .setAlpha(spare ? 0.72 : 1);
   }
   drawWaterAndLight(lights: ReturnType<typeof lanternsIn>) {
     const g = this.waterSurface, e = this.engine;

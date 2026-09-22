@@ -58,15 +58,40 @@ function enqueue(task) {
   return run;
 }
 
+/**
+ * 把无法解析的文件改名留档后继续运行。
+ *
+ * 手改 / 截断导致的 JSON 损坏如果直接抛错，会让所有账号接口永久 500 且无法自愈；
+ * 改名而不是删除，保证数据仍可人工抢救。
+ */
+async function quarantine(file, reason) {
+  const backup = file + '.corrupt-' + Date.now();
+  try {
+    await fs.rename(file, backup);
+    console.error('[garden-api] ' + file + ' ' + reason + '，已改名保留为 ' + backup);
+  } catch (error) {
+    console.error('[garden-api] ' + file + ' ' + reason + '，改名留档也失败：' + error.message);
+  }
+}
+
 export async function loadUsers() {
   if (usersCache) return usersCache;
   await ensureDirs();
+  let raw = null;
   try {
-    const raw = await fs.readFile(USERS_FILE, 'utf8');
+    raw = await fs.readFile(USERS_FILE, 'utf8');
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    usersCache = [];
+    return usersCache;
+  }
+  try {
     const parsed = JSON.parse(raw);
     usersCache = Array.isArray(parsed) ? parsed : [];
   } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
+    // 损坏的账号库不能自愈会拖垮全部接口；留档后用空库继续，
+    // 已存在的 saves/<id>.json 不会被删，账号可重新注册后继续用。
+    await quarantine(USERS_FILE, '不是合法 JSON');
     usersCache = [];
   }
   return usersCache;
@@ -138,8 +163,7 @@ export async function touchLogin(id) {
 }
 
 /** 令某用户的所有已签发会话失效（登出、改密时调用）。 */
-export async function bumpSessionVersion(id) {
-  return enqueue(async function () {
+export async function bumpSessionVersion(id) {  return enqueue(async function () {
     const users = await loadUsers();
     const found = users.find(function (user) {
       return user.id === id;
@@ -151,22 +175,65 @@ export async function bumpSessionVersion(id) {
   });
 }
 
+/**
+ * 登录成功后顺手把旧参数的哈希升级到当前参数（懒迁移，不强制改密）。
+ * 与 bumpSessionVersion 一样走串行写入，避免并发覆盖 users.json。
+ */
+export async function upgradePasswordHash(id, salt, hash) {
+  return enqueue(async function () {
+    const users = await loadUsers();
+    const found = users.find(function (user) {
+      return user.id === id;
+    });
+    if (!found) return false;
+    found.salt = salt;
+    found.hash = hash;
+    await atomicWrite(USERS_FILE, JSON.stringify(users, null, 2));
+    return true;
+  });
+}
+
+/** 用户 id 形如 u_ + 16 位十六进制；只接受这种格式，杜绝拼出目录穿越的路径。 */
+const USER_ID = /^u_[0-9a-f]{16}$/;
+
 function savePath(userId) {
+  if (typeof userId !== 'string' || !USER_ID.test(userId)) {
+    const error = new Error('INVALID_USER_ID');
+    error.code = 'INVALID_USER_ID';
+    throw error;
+  }
   return path.join(SAVES_DIR, userId + '.json');
 }
 
 async function readSaveFile(userId) {
+  let file;
   try {
-    const raw = await fs.readFile(savePath(userId), 'utf8');
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return null;
-    if (!parsed.data || typeof parsed.data !== 'object') return null;
-    const updatedAt = Number(parsed.updatedAt);
-    return { updatedAt: Number.isFinite(updatedAt) ? updatedAt : 0, data: parsed.data };
+    file = savePath(userId);
+  } catch (error) {
+    // 非法 id 只是"没有存档"，不必升级成 500（id 来自签名的会话，正常不可达）。
+    if (error.code === 'INVALID_USER_ID') return null;
+    throw error;
+  }
+  let raw;
+  try {
+    raw = await fs.readFile(file, 'utf8');
   } catch (error) {
     if (error.code === 'ENOENT') return null;
     throw error;
   }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    // 单份存档损坏不该让该用户的接口永久 500：留档后按"没有存档"处理，
+    // 客户端下一次上传会重新写入（进度以客户端为准，这里无副本可救）。
+    await quarantine(file, '不是合法 JSON');
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object') return null;
+  if (!parsed.data || typeof parsed.data !== 'object') return null;
+  const updatedAt = Number(parsed.updatedAt);
+  return { updatedAt: Number.isFinite(updatedAt) ? updatedAt : 0, data: parsed.data };
 }
 
 export async function readSave(userId) {

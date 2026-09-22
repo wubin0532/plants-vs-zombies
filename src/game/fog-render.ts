@@ -26,6 +26,38 @@ function vnoise(x: number, y: number) {
   return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
 }
 
+/**
+ * 遮罩浓度（0=完全看清，1=完全不透明）。
+ *
+ * 参数从 fog-render 的 update() 里抽出来，是为了让"加浓"可测量而不是靠手感。
+ * 曲线由两项叠加：
+ * - `vis`：以 fogFront 为起点、3.2 列内升到满值的"可见带"，负责让肉眼看到的雾
+ *   边界贴近玩法前锋（不做这一项时，可见边界会比 fogFront 落后近两列）；
+ * - `ramp`：整片蔓延范围内再补一层浓淡（0.35 次幂抬起中段），负责"越靠左越淡"的
+ *   层次感，而不是一条硬边。
+ * 取值约束：开局（ramp≈0、vis≈0）必须接近不可见，否则"从右往左蔓延"会变成
+ * "一开场就整片灰"；铺满后左半场要有六成以上浓度，右缘接近全不透明。
+ */
+export function fogDensity(
+  col: number,
+  row: number,
+  t: number,
+  front: number,
+  gy: number,
+  gx: number,
+) {
+  const span = Math.max(1, 9 - front);
+  const ramp = Math.pow(smooth(clamp01((col - front) / span)), .35);
+  const vis = smooth(clamp01((col - front) / 3.2));
+  // 低频起伏让前沿与浓淡不是一条直线，且有缓慢的呼吸感
+  const n = vnoise(gx * .006 + t * .035, gy * .006 - t * .022) * .65 +
+    vnoise(gx * .017 - t * .05, gy * .017 + t * .03) * .35;
+  const bank = smooth(clamp01((n - .42) / .5));
+  return clamp01(
+    .04 + ramp * (.42 + .38 * bank) + vis * .42 + (n - .5) * .1,
+  );
+}
+
 type Buffer = {
   data: ImageData;
   w: number;
@@ -115,7 +147,6 @@ export class FogRenderer {
     const { data, w, h, mask, ctx } = this.buffer(quality);
     const t = e.time;
     const front = fogFront(e);
-    const span = Math.max(1, 9 - front);
     const sx = 1200 / w, sy = 690 / h;
     const boardR = BOARD.left + BOARD.cell * 9, boardB = BOARD.top + BOARD.lawnHeight;
     const rowH = BOARD.lawnHeight / e.level.rows;
@@ -131,13 +162,7 @@ export class FogRenderer {
         const offset = (y * w + x) * 4;
         if (edge <= 0) { px[offset + 3] = 0; continue; }
         const col = (gx - BOARD.left) / BOARD.cell;
-        // 蔓延前沿：越靠左越淡
-        const spread = smooth(clamp01((col - front) / span));
-        // 低频起伏让前沿与浓淡不是一条直线，且有缓慢的呼吸感
-        const n = vnoise(gx * .006 + t * .035, gy * .006 - t * .022) * .65 +
-          vnoise(gx * .017 - t * .05, gy * .017 + t * .03) * .35;
-        const bank = smooth(clamp01((n - .42) / .5));
-        const density = clamp01(.04 + spread * (.35 + .45 * bank) + spread * spread * .28 + (n - .5) * .14);
+        const density = fogDensity(col, row, t, front, gy, gx);
         let reveal = 0;
         for (const p of lanterns) {
           const d = Math.max(Math.abs(p.col - col) / 2.6, Math.abs(p.row - row) / 1.6);

@@ -92,3 +92,34 @@ it("大蒜换行保留连续展示的起点", () => {
   expect(e.zombies[0].row).not.toBe(2);
   expect(e.zombies[0].laneChange?.from).toBe(2);
 });
+it("冰西瓜溅射被护甲完全吸收时不施加减速", () => {
+  const e = new Engine(1, []);
+  const melon = e.addPlant("winter", 0, 1);
+  melon.timer = 0;
+  // 主目标与紧贴它的副目标都是满护甲橄榄球僵尸：溅射打不穿头盔。
+  e.spawn("football", 0, 3);
+  e.spawn("football", 0, 3.5);
+  const [helmet, splash] = e.zombies;
+  // 注意不能用 iceSlow 作为循环条件：tick 会把它置 0，循环会立刻退出。
+  for (let i = 0; i < 400 && splash.armor === splash.maxArmor; i++) e.step(1 / 60);
+  // 两个目标都应吃到溅射（护甲掉血），但本体未掉血 → 不该被冻住。
+  expect(splash.armor).toBeLessThan(splash.maxArmor);
+  expect(splash.hp).toBe(splash.max);
+  expect(splash.iceSlow ?? 0).toBe(0);
+  expect(helmet.iceSlow ?? 0).toBe(0);
+});
+
+it("冰西瓜溅射打穿护甲后正常减速", () => {
+  const e = new Engine(1, []);
+  const melon = e.addPlant("winter", 0, 1);
+  melon.timer = 0;
+  e.spawn("football", 0, 3);
+  e.spawn("football", 0, 3.5);
+  const [helmet, splash] = e.zombies;
+  // 先把副目标护甲清掉，溅射就能伤到本体并施加减速。
+  splash.armor = 0;
+  for (let i = 0; i < 400 && (splash.iceSlow ?? 0) <= 0; i++) e.step(1 / 60);
+  expect(splash.hp).toBeLessThan(splash.max);
+  expect(splash.iceSlow).toBeGreaterThan(0);
+  expect(helmet.iceSlow ?? 0).toBe(0);
+});

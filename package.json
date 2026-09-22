@@ -11,6 +11,7 @@
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "test": "vitest run",
+    "verify:save": "node tests/verify-save-persistence.mjs",
     "assets": "node scripts/prepare-mist.mjs && node scripts/prepare-props.mjs && node scripts/prepare-weather.mjs && node scripts/prepare-presentation.mjs && node scripts/prepare-backgrounds.mjs && node scripts/prepare-assets.mjs && node scripts/prepare-motion.mjs && node scripts/prepare-cards.mjs && node scripts/prepare-anchors.mjs && node scripts/prepare-icons.mjs",
     "assets:cards": "node scripts/prepare-cards.mjs",
     "assets:anchors": "node scripts/prepare-anchors.mjs",

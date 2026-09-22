@@ -17,9 +17,31 @@ const projectiles: Record<string, Partial<ProjectileVisual> & { image: Illustrat
  star:{image:'star',width:30,height:30,spin:true,trail:0xffe89b}, fire:{image:'fire',width:46,height:33,trail:0xffaf59},
  cob:{image:'cob',width:56,height:40,lob:true,trail:0xf7d584}, basketball:{image:'basketball',width:34,height:34,lob:true,spin:true}, snowball:{image:'snowball',width:54,height:54,spin:true,trail:0xb5edfc},
 };
-/** Optional visualType lets the rules layer identify butter before launch. */
+/**
+ * Optional visualType lets the rules layer identify butter before launch.
+ *
+ * 返回的是**只读共享实例**：渲染层每帧、每颗弹丸都要取一次，原来的
+ * `{...默认, ...表项}` 会在热路径上持续制造垃圾。结果只取决于弹种，按弹种
+ * 缓存即可；调用方一律只读（渲染层只读字段，不写回）。
+ */
+const visualCache = new Map<string, ProjectileVisual>();
+export function projectileVisualFor(type: string): ProjectileVisual {
+  let visual = visualCache.get(type);
+  if (!visual) {
+    visual = Object.freeze({
+      width: 25,
+      height: 25,
+      trail: 0xb5d48b,
+      lob: false,
+      spin: false,
+      ...(projectiles[type] ?? { image: 'pea' }),
+    }) as ProjectileVisual;
+    visualCache.set(type, visual);
+  }
+  return visual;
+}
 export function projectileVisual(shot: Pick<Shot,'type'> & {visualType?: string}): ProjectileVisual {
- return {width:25,height:25,trail:0xb5d48b,lob:false,spin:false,...(projectiles[shot.visualType ?? shot.type] ?? {image:'pea'})};
+  return projectileVisualFor(shot.visualType ?? shot.type);
 }
 export function projectileHidden(shot: {delay?:number; hit:boolean}) { return shot.hit || (shot.delay ?? 0) > 0; }
 export type PlantAccent = { image: Illustration; alpha: number; scale: number; angle: number; offsetY: number };

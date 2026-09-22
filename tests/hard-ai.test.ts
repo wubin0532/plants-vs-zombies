@@ -19,7 +19,7 @@ describe("困难模式智能攻击", () => {
     expect(laneStrength([], [], 0, true)).toBe(8);
   });
 
-  it("投石车在困难模式优先拆威胁最高的目标，普通模式仍打第一株", () => {
+  it("投石车在困难模式优先拆威胁最高的目标，普通模式打最前排", () => {
     const hard = new Engine(11, [], 1, { difficulty: "hard" });
     const nut = hard.addPlant("wallnut", 0, 4);
     const melon = hard.addPlant("melon", 0, 6);
@@ -33,8 +33,19 @@ describe("困难模式智能攻击", () => {
     const melon2 = std.addPlant("melon", 0, 6);
     std.spawn("catapult", 0, 8);
     std.updateZombie(std.zombies[0], 0.1);
-    expect(nut2.hp, "普通：仍打该行第一株").toBe(nut2.max - 100);
-    expect(melon2.hp).toBe(melon2.max);
+    // 普通难度按 col 最大的最前排选目标，与种植先后无关。
+    expect(melon2.hp, "普通：打最前排（col 最大）").toBe(melon2.max - 100);
+    expect(nut2.hp).toBe(nut2.max);
+  });
+
+  it("投石车的篮球先砸南瓜头，不能越过护甲层", () => {
+    const e = new Engine(11, [], 1);
+    const pea = e.addPlant("pea", 0, 6);
+    const hide = e.addPlant("pumpkin", 0, 6);
+    e.spawn("catapult", 0, 8);
+    e.updateZombie(e.zombies[0], 0.1);
+    expect(hide.hp, "南瓜头承受篮球伤害").toBe(hide.max - 100);
+    expect(pea.hp, "主植物不该被越过护甲直击").toBe(pea.max);
   });
 
   it("蹦极在困难模式直接落在威胁最高的主植物格", () => {

@@ -535,6 +535,14 @@ export class GardenAudio {
         voice.stop();
       } catch {}
     }
+    // 立即断开总线：回调里的 buses.delete 依赖 onended，而后台标签页可能长时间
+    // 不派发它，反复暂停/重开会积压收益节点引用。
+    for (const bus of this.buses.keys()) {
+      try {
+        bus.disconnect();
+      } catch {}
+    }
+    this.buses.clear();
     this.voices.clear();
     this.last.clear();
     this.priorities.clear();

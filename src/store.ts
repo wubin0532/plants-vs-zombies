@@ -11,6 +11,7 @@ import {
   LEGACY_SAVE_KEY,
   LEGACY_SYNCED_KEY,
   saveKeyFor,
+  setLiveProfileReader,
   syncedAtKeyFor,
   writeActiveProfile,
 } from "./save-keys";
@@ -30,6 +31,20 @@ export type Save = {
   daily: { date: string; best: number };
   achievements: string[];
   items: Record<string, number>;
+  /**
+   * 消耗型资源的单调计数，用于云同步合并。
+   *
+   * coins / items 会随消费**减少**，只对余额取 max 会把已花掉的金币和已用掉的
+   * 道具从旧快照里凭空复活。因此两者各自额外记录只增不减的累计获得与累计消耗：
+   *   余额 = 累计获得 − 累计消耗
+   * 合并时两项分别取 max，余额据此回推。只记其中一项都不够：仅记「获得」时，
+   * 旧快照的余额会被误当作「获得」（无法区分「没赚到」和「已花掉」）。
+   * 缺省为 0 表示该档没有记账（v1 / 旧 v2），此时退化为 max(余额) 的旧行为。
+   */
+  coinsEarned: number;
+  coinsSpent: number;
+  itemsEarned: Record<string, number>;
+  itemsSpent: Record<string, number>;
   seedSlots: number;
   kills: number;
   contrast: boolean;
@@ -59,6 +74,10 @@ export const initial = (): Save => ({
   daily: { date: "", best: 0 },
   achievements: [],
   items: {},
+  coinsEarned: 0,
+  coinsSpent: 0,
+  itemsEarned: {},
+  itemsSpent: {},
   seedSlots: 0,
   kills: 0,
   contrast: false,
@@ -66,6 +85,23 @@ export const initial = (): Save => ({
   options: defaultOptions(),
   scores: [],
 });
+/**
+ * 过滤「id → 正整数」计数表：丢掉非正整数、非法 id 与超上限的项。
+ * 物品余额与累计获得共用，仅上限不同。
+ */
+function sanitizeCounters(raw: unknown, max: number): Record<string, number> {
+  if (!raw || typeof raw !== "object") return {};
+  return Object.fromEntries(
+    Object.entries(raw).filter(
+      ([id, n]) =>
+        id !== "ice-start" &&
+        Number.isInteger(n) &&
+        (n as number) > 0 &&
+        (n as number) <= max,
+    ) as [string, number][],
+  );
+}
+
 export function validateSave(data: unknown): Save {
   const version = (data as { version?: unknown })?.version;
   const d = data as Save;
@@ -89,6 +125,38 @@ export function validateSave(data: unknown): Save {
   )
     throw Error("存档进度不完整，未覆盖当前进度");
   // v1 → v2 迁移：v2 新增字段全部由下面的宽松校验补默认值。
+  // 余额与累计获得都需要在返回前算好，因为累计获得有「不小于余额」的不变量。
+  const items = sanitizeCounters(d.items, 99);
+  // 累计获得 / 累计消耗单独过滤（上限放宽），并保证不变量：
+  // itemsEarned >= items（余额不能超过累计获得）、itemsSpent <= itemsEarned。
+  const itemsEarnedRaw = sanitizeCounters(d.itemsEarned, 100000);
+  const itemsSpentRaw = sanitizeCounters(d.itemsSpent, 100000);
+  const itemsEarned: Record<string, number> = {};
+  const itemsSpent: Record<string, number> = {};
+  for (const id of new Set([
+    ...Object.keys(items),
+    ...Object.keys(itemsEarnedRaw),
+    ...Object.keys(itemsSpentRaw),
+  ])) {
+    const spent = Math.min(
+      itemsSpentRaw[id] ?? 0,
+      Math.max(items[id] ?? 0, itemsEarnedRaw[id] ?? 0),
+    );
+    const earned = Math.max(
+      items[id] ?? 0,
+      itemsEarnedRaw[id] ?? 0,
+      spent,
+    );
+    if (spent > 0) itemsSpent[id] = spent;
+    if (earned > 0) itemsEarned[id] = earned;
+  }
+  // 余额 = 获得 − 消耗；非法记账（消耗 > 获得）时把获得抬到消耗与余额之上。
+  const coinsSpent =
+    Number.isInteger(d.coinsSpent) && d.coinsSpent >= 0 ? d.coinsSpent : 0;
+  const coinsEarned =
+    Number.isInteger(d.coinsEarned) && d.coinsEarned >= 0
+      ? Math.max(d.coinsEarned, d.coins, coinsSpent)
+      : 0;
   return {
     ...d,
     version: 2,
@@ -148,15 +216,12 @@ export function validateSave(data: unknown): Save {
     achievements: Array.isArray(d.achievements)
       ? [...new Set(d.achievements.filter((a) => typeof a === "string"))]
       : [],
-    items:
-      d.items && typeof d.items === "object"
-        ? Object.fromEntries(
-            Object.entries(d.items).filter(
-              ([id, n]) =>
-                id !== "ice-start" && Number.isInteger(n) && n > 0 && n <= 99,
-            ),
-          )
-        : {},
+    items: items,
+    // 累计获得 / 累计消耗必须是非负整数，且满足 余额 ≤ 获得、消耗 ≤ 获得。
+    coinsEarned,
+    coinsSpent,
+    itemsEarned,
+    itemsSpent,
     seedSlots:
       Number.isInteger(d.seedSlots) && d.seedSlots >= 0 && d.seedSlots <= 10
         ? d.seedSlots
@@ -195,6 +260,17 @@ export function progressRank(s: Save): number {
  * 两个合法存档的 completed 都是从 1 开始的连续区间，因此取更长的一个即可。
  */
 export function mergeSave(a: Save, b: Save): Save {
+  return mergeCore(a, b, undefined);
+}
+
+/**
+ * 同机两份存档的进度合并内核。
+ *
+ * keep 给出「界面偏好以谁为准」：音量 / 画质 / 字体等设置不是单调量，
+ * 按进度排名取一侧会得到与操作顺序相关的怪异结果，因此持久化路径显式传入
+ * 当前内存档作为 keep，让本地设置覆盖另一侧。
+ */
+function mergeCore(a: Save, b: Save, keep: Save | undefined): Save {
   const base = progressRank(a) >= progressRank(b) ? a : b;
   const completed = base.completed;
   const unlocked = Math.min(51, Math.max(base.unlocked, completed.length + 1));
@@ -206,9 +282,43 @@ export function mergeSave(a: Save, b: Save): Save {
     const n = Number(level);
     stars[n] = Math.max(a.stars?.[n] ?? 0, b.stars?.[n] ?? 0);
   }
-  const items: Record<string, number> = { ...a.items };
-  for (const [id, n] of Object.entries(b.items ?? {}))
-    items[id] = Math.max(items[id] ?? 0, n);
+  // 消耗型资源：余额 = 累计获得 − 累计消耗，两项都只增不减。
+  // 只对余额取 max 会把已花掉的金币 / 已用掉的道具从旧快照里复活；只记「获得」
+  // 也不够，因为旧快照的余额会被误当成「获得」（无法区分「没赚到」和「已花掉」）。
+  // 消耗是**事实**：两侧记到的是同一批支出，取较大者；获得同样只增不减取较大者；
+  // 余额回推为 获得 − 消耗。没有任何一侧记过账（coinsEarned / itemsEarned 为 0 的
+  // v1 / 旧 v2 档）时，该侧的余额同时充当「获得」，退化为旧的 max(余额) 行为。
+  const aEarned = a.coinsEarned > 0 ? a.coinsEarned : a.coins;
+  const bEarned = b.coinsEarned > 0 ? b.coinsEarned : b.coins;
+  const coinsEarned = Math.max(aEarned, bEarned);
+  const coinsSpent = Math.max(a.coinsSpent ?? 0, b.coinsSpent ?? 0);
+  const coins = Math.max(0, coinsEarned - coinsSpent);
+  const itemsEarned: Record<string, number> = {};
+  const itemsSpent: Record<string, number> = {};
+  const items: Record<string, number> = {};
+  for (const id of new Set([
+    ...Object.keys(a.items ?? {}),
+    ...Object.keys(b.items ?? {}),
+    ...Object.keys(a.itemsEarned ?? {}),
+    ...Object.keys(b.itemsEarned ?? {}),
+    ...Object.keys(a.itemsSpent ?? {}),
+    ...Object.keys(b.itemsSpent ?? {}),
+  ])) {
+    const aBalance = a.items?.[id] ?? 0;
+    const bBalance = b.items?.[id] ?? 0;
+    const spent = Math.max(a.itemsSpent?.[id] ?? 0, b.itemsSpent?.[id] ?? 0);
+    // 余额兜底即「没有记账的一侧把余额当作获得」。
+    const earned = Math.max(
+      aBalance,
+      bBalance,
+      a.itemsEarned?.[id] ?? 0,
+      b.itemsEarned?.[id] ?? 0,
+    );
+    const balance = Math.max(0, earned - spent);
+    if (spent > 0) itemsSpent[id] = spent;
+    if (earned > 0) itemsEarned[id] = earned;
+    if (balance > 0) items[id] = balance;
+  }
   const daily =
     a.daily.date === b.daily.date
       ? {
@@ -226,16 +336,32 @@ export function mergeSave(a: Save, b: Save): Save {
     version: 2,
     completed,
     unlocked,
-    coins: Math.max(a.coins, b.coins),
+    coins,
+    coinsEarned,
+    coinsSpent,
     kills: Math.max(a.kills, b.kills),
     seedSlots: Math.max(a.seedSlots, b.seedSlots),
     stars,
     items,
+    itemsEarned,
+    itemsSpent,
     achievements: [...new Set([...a.achievements, ...b.achievements])],
     tutorialSeen: [...new Set([...a.tutorialSeen, ...b.tutorialSeen])].slice(0, 30),
     scores: [...a.scores, ...b.scores].slice(-200),
     daily: Number.isFinite(daily.best) ? daily : { date: daily.date, best: 0 },
   };
+  // 偏好类字段：显式 keep 时以本地为准，否则沿用 base（与原行为一致）。
+  if (keep)
+    Object.assign(merged, {
+      sound: keep.sound,
+      volume: keep.volume,
+      mix: { ...keep.mix },
+      quality: keep.quality,
+      shake: keep.shake,
+      contrast: keep.contrast,
+      fontSize: keep.fontSize,
+      options: keep.options,
+    });
   return validateSave(merged);
 }
 
@@ -296,6 +422,12 @@ const SEED_SLOT_PRICES = [600, 1400, 2800, 4800];
 export const seedSlotPriceFor = (seedSlots: number) =>
   SEED_SLOT_PRICES[seedSlots] ??
   SEED_SLOT_PRICES[SEED_SLOT_PRICES.length - 1];
+// store 挂载后，本标签页的权威归属是内存里的 profile；把它登记给 save-keys，
+// 让 replay.ts 等纯读取方不再依赖可能被别的标签页改写的 localStorage。
+setLiveProfileReader(() => {
+  if (!getActivePinia()) return undefined;
+  return useSave().profile;
+});
 export const useSave = defineStore("save", {
   state: () => ({
     data: initial(),
@@ -316,6 +448,27 @@ export const useSave = defineStore("save", {
   actions: {
     /** 载入指定归属的本机档；不存在则空档起步，绝不沿用上一个账号的内存数据。 */
     load(profile: string = GUEST_PROFILE) {
+      // 切换归属前先把上一个归属的内存进度落回它自己的槽。
+      // 否则「改了设置但没触发写入就切号」会让那次改动丢失；
+      // 更不能把它写进新归属的槽（那才是跨账号泄漏）。
+      if (
+        profile !== this.profile &&
+        this.profile !== GUEST_PROFILE &&
+        typeof localStorage !== "undefined"
+      ) {
+        try {
+          const stored = readProfile(this.profile);
+          const next = stored
+            ? mergeCore(this.data, stored, this.data)
+            : this.data;
+          localStorage.setItem(
+            saveKeyFor(this.profile),
+            JSON.stringify(next),
+          );
+        } catch {
+          /* 落盘失败不阻塞切换 */
+        }
+      }
       this.profile = profile;
       writeActiveProfile(profile);
       this.claim = null;
@@ -329,6 +482,10 @@ export const useSave = defineStore("save", {
         if (raw) this.data = validateSave(JSON.parse(raw));
         else this.data = initial();
       } catch {
+        // 必须真正重置内存态：只写 warning 会让上一个账号的进度残留在
+        // this.data 里，随后一次 persist() 就把它写进当前归属的槽位（跨账号泄漏）。
+        this.data = initial();
+        this.cloudAt = 0;
         this.warning =
           "本地存档损坏，进度已重置。如有备份，可在设置中导入恢复。";
       }
@@ -341,13 +498,46 @@ export const useSave = defineStore("save", {
       }
       this.reconciled = false;
     },
-    persist() {
+    /**
+     * 写入本归属的存档槽。
+     *
+     * 默认走「读-合并-写」：另一个标签页可能已经写下更新的进度，整快照盲写会把
+     * 它覆盖掉（访客档没有云端兜底，覆盖即永久丢失）。合并时界面偏好以内存为准。
+     * force 用于用户显式要求的覆盖（导入存档），此时不做合并，直接落盘。
+     */
+    persist(force = false) {
       try {
-        localStorage.setItem(saveKeyFor(this.profile), JSON.stringify(this.data));
+        let next = this.data;
+        if (!force) {
+          const stored = readProfile(this.profile);
+          if (stored) next = mergeCore(this.data, stored, this.data);
+        }
+        this.data = next;
+        localStorage.setItem(saveKeyFor(this.profile), JSON.stringify(next));
       } catch {
         this.warning = "浏览器未能保存进度，请导出存档备份。";
       }
       this.scheduleCloudPush();
+    },
+    /**
+     * 另一个标签页写入了本归属的存档时重载内存态。
+     *
+     * 与 persist() 的读-合并-写互补：合并只在「本标签页恰好要写」时发生，
+     * 若本标签页一直不动，仍会停留在旧进度上并可能在下一次写入时把对方回退。
+     * 这里在收到 storage 事件时立即对齐，且因为是合并而非覆盖，不会丢任何一侧。
+     */
+    reloadFromStorage() {
+      if (typeof localStorage === "undefined") return;
+      const stored = readProfile(this.profile);
+      if (!stored) return;
+      const merged = mergeCore(this.data, stored, this.data);
+      if (JSON.stringify(merged) === JSON.stringify(this.data)) return;
+      suppressPush = true;
+      try {
+        this.data = merged;
+      } finally {
+        suppressPush = false;
+      }
     },
     scheduleCloudPush() {
       if (!getActivePinia() || suppressPush) return;
@@ -560,7 +750,10 @@ export const useSave = defineStore("save", {
         this.data.unlocked,
         Math.min(51, level + 1),
       );
-      this.data.coins += coins;
+      // 非有限值会让 coins / coinsEarned 变成 NaN 并触发存档校验失败。
+      const gained = Number.isFinite(coins) ? Math.max(0, Math.floor(coins)) : 0;
+      this.data.coins += gained;
+      this.data.coinsEarned += gained;
       delete this.data.lossStreak[level];
       this.persist();
     },
@@ -568,7 +761,9 @@ export const useSave = defineStore("save", {
      *  每日挑战不再调用它：每日挑战是纯挑战，不掉金币、也不进商店。 */
     addCoins(coins: number) {
       if (!Number.isFinite(coins) || coins <= 0) return;
-      this.data.coins += Math.floor(coins);
+      const gained = Math.floor(coins);
+      this.data.coins += gained;
+      this.data.coinsEarned += gained;
       this.persist();
     },
     recordLoss(level: number) {
@@ -603,9 +798,38 @@ export const useSave = defineStore("save", {
     buyItem(id: string, price: number) {
       if (this.data.coins < price) return false;
       this.data.coins -= price;
+      this.data.coinsSpent += price;
       this.data.items[id] = (this.data.items[id] ?? 0) + 1;
+      // 累计获得只增不减：云合并靠它区分「没赚到」和「已经花掉」。
+      this.data.itemsEarned[id] = (this.data.itemsEarned[id] ?? 0) + 1;
       this.persist();
       return true;
+    },
+    /** 购买基础卡槽扩容（消耗金币，coinsEarned 不变、coinsSpent 增加）。 */
+    buySeedSlot(price: number) {
+      if (this.data.coins < price) return false;
+      if (this.data.seedSlots >= MAX_SEED_SLOT_PURCHASES) return false;
+      this.data.coins -= price;
+      this.data.coinsSpent += price;
+      this.data.seedSlots += 1;
+      this.persist();
+      return true;
+    },
+    /**
+     * 开局消耗道具。逐项扣减并记入 itemsSpent，返回实际生效的项，
+     * 供调用方决定是否给引擎加成（避免 UI 层直接改 items 而绕过记账，
+     * 那样云合并会把用掉的道具复活）。
+     */
+    consumeItems(ids: string[]) {
+      const used: string[] = [];
+      for (const id of ids) {
+        if ((this.data.items[id] ?? 0) <= 0) continue;
+        this.data.items[id] -= 1;
+        this.data.itemsSpent[id] = (this.data.itemsSpent[id] ?? 0) + 1;
+        used.push(id);
+      }
+      if (used.length) this.persist();
+      return used;
     },
     importSave(raw: string) {
       let parsed: unknown;
@@ -615,7 +839,8 @@ export const useSave = defineStore("save", {
         throw Error("存档文件不是合法 JSON");
       }
       this.data = validateSave(parsed);
-      this.persist();
+      // 导入是用户显式要求的覆盖，不能与槽内旧档合并。
+      this.persist(true);
       this.warning = "存档已导入。";
     },
   },

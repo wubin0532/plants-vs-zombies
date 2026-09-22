@@ -79,6 +79,8 @@ export type Zombie = {
   summonTimer?: number;
   age: number;
   jumped: boolean;
+  /** 玩偶匣的引爆时刻（一次性采样，保证不同步长下 RNG 序列一致）。 */
+  explodeAt?: number;
   /** 金属装备被磁力菇吸走后置为 true（梯子、跳杆、矿镐、玩偶匣）。 */
   disarmed?: boolean;
   /** 困难模式下绕过坚果的一次性换行标记。 */
@@ -200,6 +202,13 @@ export class Engine {
   tokens: Token[] = [];
   effects: Effect[] = [];
   tiles: Tile[] = [];
+  /**
+   * 地块集合的版本号：凡增删地块就自增。
+   * 渲染层用它做缓存失效判定，避免每帧把地块拼成字符串来比对
+   * （地块几秒才变一次，逐帧拼串纯粹是白造的垃圾）。地块的 life 倒计时
+   * 不影响外观，不参与版本号。
+   */
+  tilesVersion = 0;
   mowers: boolean[];
   spareMowers: boolean[];
   sun = 150;
@@ -279,6 +288,10 @@ export class Engine {
   weatherLoop = false;
   private rng: number;
   private rngSeed: number;
+  /**
+   * 首颗天降阳光的倒计时。刻意用固定的 4 秒「快速首降」让开局不至于干等，
+   * 稳态间隔是 skySunInterval（缺省 8 秒），由 setSkySunInterval / 每日词缀覆盖。
+   */
   private natural = 4;
   private beltTimer = 0;
   constructor(
@@ -303,13 +316,15 @@ export class Engine {
     if (this.level.scene === "night") {
       const graveRows = [0, 1, 2, 3, 4];
       const graveCount = Math.min(2 + this.level.stage, 8);
-      for (let i = 0; i < graveCount; i++)
+      for (let i = 0; i < graveCount; i++) {
         this.tiles.push({
           row: graveRows[i % graveRows.length],
           col: 5 + Math.floor(i / graveRows.length),
           type: "grave",
           life: Infinity,
         });
+        this.tilesVersion++;
+      }
     }
     if (isNight(this.level.scene) && this.level.mode === "normal")
       this.say("夜晚没有天降阳光，蘑菇们更活跃；向日葵在夜里生产变慢");
@@ -320,8 +335,10 @@ export class Engine {
         for (let c = 0; c < 3; c++) this.addPlant("pot", r, c);
     if (this.level.mode === "vases") {
       for (let r = 0; r < 6; r++)
-        for (let c = 4; c < 8; c++)
+        for (let c = 4; c < 8; c++) {
           this.tiles.push({ row: r, col: c, type: "vase", life: Infinity });
+          this.tilesVersion++;
+        }
       this.tiles.find(t => t.row === 0 && t.col === 4)!.reward = "snowpea";
       this.tiles.find(t => t.row === 1 && t.col === 4)!.reward = "arc";
       this.say("冰、电标记罐藏着组合种子；其余罐子可能有僵尸！");
@@ -598,6 +615,15 @@ export class Engine {
     return (
       ["pool", "fog"].includes(this.level.scene) && (row === 2 || row === 3)
     );
+  }
+  /**
+   * 可落阳光的陆行行号。泳池/迷雾关的 2、3 行是水面，天降阳光不该掉进水里，
+   * 否则约三分之一的阳光落点看着就不对（收集本身不受影响）。
+   */
+  private landRows(): number[] {
+    const rows: number[] = [];
+    for (let r = 0; r < this.level.rows; r++) if (!this.water(r)) rows.push(r);
+    return rows;
   }
   at(row: number, col: number, layer?: Plant["layer"]) {
     return this.plants.find(
@@ -1176,6 +1202,7 @@ export class Engine {
     );
     if (vase) {
       this.tiles = this.tiles.filter((t) => t !== vase);
+    this.tilesVersion++;
       this.effect(col, row, "plant");
       if (vase.reward) this.conveyor.push(vase.reward);
       else if (this.random() < 0.4) {
@@ -1307,12 +1334,21 @@ export class Engine {
     if (d.kind === "sun" || d.kind === "coin") score += 40;
     return score;
   }
-  /** 投石车目标：普通难度打该行第一株主植物；困难改打威胁最高且未被保护伞罩住的目标。 */
+  /**
+   * 投石车目标：普通难度打该行最前排（col 最大）的主植物；
+   * 困难改打威胁最高且未被保护伞罩住的目标。
+   */
   private catapultTarget(row: number) {
-    if (!this.smartAttack)
-      return this.plants.find(
-        (p) => p.hp > 0 && p.row === row && p.layer === "main",
-      );
+    if (!this.smartAttack) {
+      // 必须按 col 取最前排，而不是数组里第一株：plants 是按种植顺序 push 的，
+      // find() 会选中最早种下的那株（往往在最后方），等于让投石车永远打不到前线。
+      let front: Plant | undefined;
+      for (const p of this.plants) {
+        if (p.hp <= 0 || p.row !== row || p.layer !== "main") continue;
+        if (!front || p.col > front.col) front = p;
+      }
+      return front;
+    }
     let best: Plant | undefined,
       bestScore = -Infinity;
     for (const p of this.plants) {
@@ -1431,15 +1467,22 @@ export class Engine {
     this.tokens.forEach((t) => (t.age += dt));
     this.tokens = this.tokens.filter((t) => t.age < TOKEN_LIFETIME);
     this.tiles.forEach((t) => (t.life -= dt));
-    this.tiles = this.tiles.filter((t) => t.life > 0);
+    // 只在真的有地块被移除时递增版本号：life 倒计时本身不影响外观。
+    {
+      const before = this.tiles.length;
+      this.tiles = this.tiles.filter((t) => t.life > 0);
+      if (this.tiles.length !== before) this.tilesVersion++;
+    }
     if (!this.isBelt && !isNight(this.level.scene)) {
       this.natural -= dt;
       if (this.natural <= 0) {
+        const rows = this.landRows();
         this.token(
           0.4 + this.random() * 7.8,
-          this.random() * (this.level.rows - 1),
+          rows[Math.floor(this.random() * rows.length)] ?? 0,
           25, false, "sky",
         );
+        // 雨天的天降阳光更密；这里的 4 秒是雨天节奏，与首降的 4 秒无关。
         this.natural =
           this.time < this.rainUntil
             ? 4
@@ -1592,13 +1635,15 @@ export class Engine {
       ) {
         if (d.kind === "bomb" || d.kind === "doom") {
           this.blast(p.col, p.row, d.kind === "doom" ? 2.5 : 1.5, 1800, p.id);
-          if (d.kind === "doom")
+          if (d.kind === "doom") {
             this.tiles.push({
               row: p.row,
               col: p.col,
               type: "crater",
               life: 90,
             });
+            this.tilesVersion++;
+          }
         }
         if (d.kind === "ice") {
           for (const z of targets) {
@@ -1617,6 +1662,7 @@ export class Engine {
           this.tiles = this.tiles.filter(
             (t) => !(t.type === "ice" && t.row === p.row),
           );
+          this.tilesVersion++;
           for (let c = 0; c < 9; c++) this.effect(c, p.row, "boom", "jalapeno");
           if (this.bossBall?.type === "ice" && this.bossBall.row === p.row)
             this.bossBall = null;
@@ -2009,8 +2055,12 @@ export class Engine {
               Math.abs(other.row - z.row) <= 1
             ) {
               if (s.type === "fire") consumeIce(other);
+              const splashBefore = other.hp;
               this.damage(other, s.damage / 3, false, isLob(s.type));
-              if (s.type === "winter") applyControl(other, "iceSlow", 10);
+              // 与主命中同规则：溅射被护甲完全吸收时不施加减速，
+              // 否则戴头盔的僵尸会凭空被冻住，护甲行为不可预期。
+              if (s.type === "winter" && other.hp < splashBefore)
+                applyControl(other, "iceSlow", 10);
             }
       }
     }
@@ -2231,12 +2281,13 @@ export class Engine {
       }
       return;
     }
-    if (
-      z.id === "jack" &&
-      !z.disarmed &&
-      z.age > 15 &&
-      this.random() < dt * 0.2
-    ) {
+    if (z.id === "jack" && !z.disarmed && z.age > 15) {
+      // 爆炸时刻一次性采样，而不是按 `random() < dt * 0.2` 逐帧掷骰：
+      // 后者会让不同步长（1/60 与 0.1）在同一颗种子下于不同模拟帧引爆，
+      // 从而消耗不同次数的 RNG，使后续所有随机结果分叉。
+      if (z.explodeAt === undefined) z.explodeAt = z.age + this.random() * 10;
+      // 未到引爆时刻：按普通行走继续推进（action 已在 advanceZombie 开头置为 walk）。
+      if (z.age < z.explodeAt) return;
       if (z.ally) {
         for (const enemy of this.zombies)
           if (!enemy.ally && Math.abs(enemy.row - z.row) <= 1 && Math.abs(enemy.x - z.x) < 1.5)
@@ -2273,9 +2324,12 @@ export class Engine {
       if (z.timer <= 0) {
         const p = this.catapultTarget(z.row);
         if (p && !this.protected(p.row, p.col)) {
-          p.hp -= 100;
-          p.hurt = 0.16;
-          this.effect(p.col, p.row, "hit");
+          // 篮球先砸护甲层（南瓜头），不能越过它直接扣主植物。
+          const hide = this.at(p.row, p.col, "armor");
+          const target = hide && hide.hp > 0 ? hide : p;
+          target.hp -= 100;
+          target.hurt = 0.16;
+          this.effect(target.col, target.row, "hit");
         }
         z.timer = 3;
       }
@@ -2464,6 +2518,7 @@ export class Engine {
       const col = Math.round(z.x);
       if (!this.tiles.some((t) => t.row === z.row && t.col === col))
         this.tiles.push({ row: z.row, col, type: "ice", life: 60 });
+        this.tilesVersion++;
     }
     if (z.x < -0.65 && !z.ally) {
       if (this.mowers[z.row] || this.spareMowers[z.row]) {

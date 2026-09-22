@@ -77,14 +77,26 @@ export function plantMotionFrame(p: Plant) {
     return 8 + Math.min(3, Math.floor(((0.4 - p.timer) / 0.4) * 4));
   return idleFrame(p, 8, idleFrameRate(p.id));
 }
-export function zombieAppearance(z: Zombie) {
-  const id =
-    z.armor === 0 && ["cone", "bucket", "screen"].includes(z.id)
-      ? "basic"
-      : z.id;
+export type ZombieAppearance = {
+  id: string;
+  natural: boolean;
+  texture: string;
+  width: number;
+  height: number;
+  origin: number;
+  extent: number;
+};
+/**
+ * 僵尸外观表：结果只取决于「外观 id」，与其它运行状态无关，因此按 id 预计算并
+ * 共享。渲染层每只僵尸每帧都要取一次，原来的对象字面量是稳定的 GC 来源。
+ */
+const appearanceCache = new Map<string, ZombieAppearance>();
+function appearanceFor(id: string): ZombieAppearance {
+  let appearance = appearanceCache.get(id);
+  if (appearance) return appearance;
   const natural = (sequenceZombies as readonly string[]).includes(id);
   if (id === "garg" || id === "pole")
-    return {
+    appearance = {
       id,
       natural,
       texture: "walk-" + id,
@@ -93,8 +105,8 @@ export function zombieAppearance(z: Zombie) {
       origin: 313 / 320,
       extent: id === "garg" ? 96 : 118,
     };
-  if (isMotionZombie(id))
-    return {
+  else if (isMotionZombie(id))
+    appearance = {
       id,
       natural: false,
       texture: "walk-" + id,
@@ -104,15 +116,26 @@ export function zombieAppearance(z: Zombie) {
       origin: (bakedFrame.height - 7) / bakedFrame.height,
       extent: 106,
     };
-  return {
-    id,
-    natural,
-    texture: (natural ? "walk-" : "anim-") + id,
-    width: natural ? 96 : 85 * bakedFrame.width / 160,
-    height: natural ? 128 : 106 * bakedFrame.height / 200,
-    origin: natural ? 249 / 256 : (193 + bakedPadding) / bakedFrame.height,
-    extent: natural ? (id === "cone" ? 112 : id === "bucket" ? 101 : 88) : 106,
-  };
+  else
+    appearance = {
+      id,
+      natural,
+      texture: (natural ? "walk-" : "anim-") + id,
+      width: natural ? 96 : 85 * bakedFrame.width / 160,
+      height: natural ? 128 : 106 * bakedFrame.height / 200,
+      origin: natural ? 249 / 256 : (193 + bakedPadding) / bakedFrame.height,
+      extent: natural ? (id === "cone" ? 112 : id === "bucket" ? 101 : 88) : 106,
+    };
+  appearanceCache.set(id, appearance);
+  return appearance;
+}
+export function zombieAppearance(z: Zombie): ZombieAppearance {
+  // 路障/铁桶/铁栅门被打碎后换回普通外观，其余情况直接用僵尸自身 id。
+  const id =
+    z.armor === 0 && ["cone", "bucket", "screen"].includes(z.id)
+      ? "basic"
+      : z.id;
+  return appearanceFor(id);
 }
 export function zombieFrame(z: Zombie, natural = zombieAppearance(z).natural) {
   if (z.id === "dancer" && z.special?.kind === "summon")
@@ -169,24 +192,50 @@ export function plantHeadPose(p: Plant, kind: string) {
   };
 }
 
-/** Additional whole-body motion uses the simulation clock, including slow/freeze. */
-export function zombiePose(z: Zombie) {
+/**
+ * Additional whole-body motion uses the simulation clock, including slow/freeze.
+ *
+ * 结果写进调用方给的 `into`，不分配对象：渲染层每只僵尸每帧都要取一次角度与
+ * 抬升，原本每帧一个对象字面量是稳定的垃圾来源。`zombiePose` 保留原来的
+ * 「返回新对象」语义供测试与外部调用。
+ */
+export function zombieMotionInto(
+  z: Zombie,
+  into: { angle: number; lift: number },
+) {
   const phase = z.motion / 20 * Math.PI * 2;
-  if (z.jump) return { angle: 0, lift: 0 };
+  if (z.jump) {
+    into.angle = 0;
+    into.lift = 0;
+    return into;
+  }
   const transition = Math.min(1, (z.actionTime ?? 0.16) / 0.16);
   const weight = z.action === "eat" ? 1 - transition : transition;
-  if (z.id === "dancer" || z.id === "backup")
-    return { angle: Math.sin(phase) * 3 * weight, lift: 0 };
-  if (z.id === "pogo")
-    return { angle: Math.sin(phase) * 2 * weight, lift: Math.abs(Math.sin(phase)) * 12 * weight };
-  if (floats.has(z.id))
-    return { angle: Math.sin(phase) * 1.5 * weight, lift: Math.sin(phase) * 3 * weight };
-  if (z.id === "football" || z.id === "imp" || z.id === "yeti")
-    return { angle: (-2 + Math.sin(phase) * 1.5) * weight, lift: 0 };
-  return { angle: 0, lift: 0 };
+  if (z.id === "dancer" || z.id === "backup") {
+    into.angle = Math.sin(phase) * 3 * weight;
+    into.lift = 0;
+  } else if (z.id === "pogo") {
+    into.angle = Math.sin(phase) * 2 * weight;
+    into.lift = Math.abs(Math.sin(phase)) * 12 * weight;
+  } else if (floats.has(z.id)) {
+    into.angle = Math.sin(phase) * 1.5 * weight;
+    into.lift = Math.sin(phase) * 3 * weight;
+  } else if (z.id === "football" || z.id === "imp" || z.id === "yeti") {
+    into.angle = (-2 + Math.sin(phase) * 1.5) * weight;
+    into.lift = 0;
+  } else {
+    into.angle = 0;
+    into.lift = 0;
+  }
+  return into;
 }
+export function zombiePose(z: Zombie) {
+  return zombieMotionInto(z, { angle: 0, lift: 0 });
+}
+/** 无分配的抬升查询，供每帧插值使用（jumpHeight 的标量内核）。 */
+const liftScratch = { angle: 0, lift: 0 };
 export function jumpHeight(z: Zombie) {
-  if (!z.jump) return zombiePose(z).lift;
+  if (!z.jump) return zombieMotionInto(z, liftScratch).lift;
   const p = z.jump.elapsed / z.jump.duration;
   return (z.jump.fromHeight ?? 0) * (1 - p) + Math.sin(Math.PI * p) * 46;
 }
