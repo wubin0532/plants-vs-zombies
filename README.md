@@ -80,7 +80,22 @@ ssh fnos 'tar czf /vol1/1000/Docker/Data/garden-backup-$(date +%F).tar.gz -C /vo
 
 **Starting over**: `ssh -t fnos 'bash /vol1/1000/Docker/garden-server/reset-garden-data.sh'`. The service caches the user table in memory; after manually deleting files you must restart the container for it to take effect.
 
-**Forgot password**: no recovery flow yet. Delete that user's `saves/<id>.json`, remove their entry from `users.json`, restart the container, and have them re-register.
+**Forgot password**: use the bundled reset script. It only replaces the password hash and **keeps the `user.id` and the cloud save**.
+
+One command from the Mac (SSHes to the NAS, enters the container, resets; without `--password` it prompts with hidden input):
+
+```sh
+./deploy/reset-garden-password.sh --list          # list accounts (id / has save / last login)
+./deploy/reset-garden-password.sh <username>      # reset (prompts for the new password)
+ssh fnos 'sudo docker restart garden-api'         # required: users.json is cached in memory
+```
+
+On the NAS itself run `sudo bash /vol1/1000/Docker/garden-server/reset-garden-password.sh <username>`,
+or call the underlying script directly: `sudo docker exec -it garden-api node /app/server/reset-password.mjs <username>`.
+`SUDO=`, `DOCKER=`, `NAS=`, `CONTAINER=` and `APP_HOST_DIR=` can be overridden (use `SUDO= ` when running as root).
+
+Outside the container, point `DATA_DIR` at the data directory, e.g. `DATA_DIR=/vol1/1000/Docker/Data/garden npm run reset-password -- <username>`.
+Progress is preserved because the save file is named after `user.id`; this differs from "delete the account and re-register", which discards the save too.
 
 `deploy/docker-compose.garden.yml` provides an equivalent compose setup (external network `garden-net`, running as `1000:1001`) for merging into existing orchestration; `deploy/nginx.conf` is a pure-static deployment example with security response headers and cache policies split between hashed and fixed-name assets.
 
@@ -112,7 +127,7 @@ Notable differences from the original:
 ## Verification Record
 
 - Rules tests cover resources, cooldowns, pausing, armor, water lanes, roof, mushroom waking, jumping, ladders, explosions, conveyor belt, Imitater, and save validation.
-- Backend tests in `server/index.test.mjs` cover registration, password verification, 401 when logged out, logout revoking sessions, optimistic concurrency, **save two-way isolation (API and on-disk)**, cross-site write rejection, Content-Type enforcement, source-address normalisation, `users.json` self-healing, rate limiting, and the `MAX_USERS` cap; the frontend has tests for cloud-save merging, import validation, and **same-device multi-account save isolation**. The two sprite source sheets are committed to the repo (see `.gitignore`); the `npm test` pass count is reproducible on a clean clone / CI (currently 650).
+- Backend tests in `server/index.test.mjs` cover registration, password verification, 401 when logged out, logout revoking sessions, optimistic concurrency, **save two-way isolation (API and on-disk)**, cross-site write rejection, Content-Type enforcement, source-address normalisation, `users.json` self-healing, rate limiting, and the `MAX_USERS` cap; the frontend has tests for cloud-save merging, import validation, and **same-device multi-account save isolation**. The two sprite source sheets are committed to the repo (see `.gitignore`); the `npm test` pass count is reproducible on a clean clone / CI (currently 652).
 - Verified in a real browser: auto-uploading the save after registration, the sync status in the top bar, and logout; on the NAS through Nginx, verified `/api/health`, registration, save read/write, and cookie issuance.
 - A browser-side save check runs locally with `npm run dev` plus `npm run verify:save` (asserts a legacy v2 save still loads, the four accounting fields really reach localStorage, the balance never exceeds lifetime earnings, and the path raises no runtime errors). It needs Playwright browsers, so it is intentionally outside `npm test` (CI installs no browsers).
 - All 50 levels were run to completion with a fixed seed and an auto-player, checking for stalls and illegal resources; win/loss depends on the auto strategy and current difficulty. This check **does not mean every level has passed manual playthrough acceptance**.

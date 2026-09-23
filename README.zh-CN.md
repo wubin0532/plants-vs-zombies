@@ -78,7 +78,22 @@ ssh fnos 'tar czf /vol1/1000/Docker/Data/garden-backup-$(date +%F).tar.gz -C /vo
 
 **清空重来**：`ssh -t fnos 'bash /vol1/1000/Docker/garden-server/reset-garden-data.sh'`。服务把用户表缓存在内存，手动删除文件后必须重启容器才会生效。
 
-**忘记密码**：暂无找回流程。删除对应用户的 `saves/<id>.json`，从 `users.json` 移除该条，重启容器后让对方重新注册。
+**忘记密码**：用仓库自带的重置脚本，**只换密码哈希、保留 `user.id` 与云存档**。
+
+在 Mac 上一条命令（自动 SSH 到 NAS、进容器、重置；不带 `--password` 时交互式输入且不回显）：
+
+```sh
+./deploy/reset-garden-password.sh --list          # 先看有哪些账号（id / 是否有存档 / 上次登录）
+./deploy/reset-garden-password.sh <用户名>          # 重置（会提示输入新密码）
+ssh fnos 'sudo docker restart garden-api'         # 必须重启：服务把 users.json 缓存在内存里
+```
+
+也可以在 NAS 上直接跑 `sudo bash /vol1/1000/Docker/garden-server/reset-garden-password.sh <用户名>`，
+或只调底层脚本：`sudo docker exec -it garden-api node /app/server/reset-password.mjs <用户名>`。
+`SUDO=`、`DOCKER=`、`NAS=`、`CONTAINER=`、`APP_HOST_DIR=` 都可覆盖（以 root 运行时用 `SUDO= `）。
+
+本机（非容器）用时把 `DATA_DIR` 指到数据目录，例如 `DATA_DIR=/vol1/1000/Docker/Data/garden npm run reset-password -- <用户名>`。
+重置后客户端用新密码登录即可，**进度不会丢**（存档文件名就是 `user.id`）。这与"清账号重注册"不同——后者会连存档一起作废。
 
 `deploy/docker-compose.garden.yml` 提供等价的 compose 写法（外部网络 `garden-net`、以 `1000:1001` 运行），便于并入现有编排；`deploy/nginx.conf` 是纯静态部署示例，含安全响应头与区分哈希/固定名素材的缓存策略。
 
@@ -110,7 +125,7 @@ ssh fnos 'tar czf /vol1/1000/Docker/Data/garden-backup-$(date +%F).tar.gz -C /vo
 ## 验证记录
 
 - 规则测试覆盖资源、冷却、暂停、护甲、水路、屋顶、蘑菇唤醒、跳跃、扶梯、爆炸、传送带、模仿者和存档校验。
-- 后端测试 `server/index.test.mjs` 覆盖注册、密码校验、未登录 401、登出撤销会话、乐观并发、**存档双向隔离（接口与落盘）**、跨站写拒绝、Content-Type 校验、来源地址归一化、`users.json` 损坏自愈、限流与 `MAX_USERS` 上限；前端有云存档合并、导入校验与**同机多账号存档隔离**测试。精灵切图的两张源图已纳入版本库（见 `.gitignore`），`npm test` 的通过数在干净克隆 / CI 上可复现（当前 650 项）。
+- 后端测试 `server/index.test.mjs` 覆盖注册、密码校验、未登录 401、登出撤销会话、乐观并发、**存档双向隔离（接口与落盘）**、跨站写拒绝、Content-Type 校验、来源地址归一化、`users.json` 损坏自愈、限流与 `MAX_USERS` 上限；前端有云存档合并、导入校验与**同机多账号存档隔离**测试。精灵切图的两张源图已纳入版本库（见 `.gitignore`），`npm test` 的通过数在干净克隆 / CI 上可复现（当前 652 项）。
 - 真实浏览器验证注册后自动上传存档、顶栏显示同步状态与退出登录；NAS 上经 Nginx 实测 `/api/health`、注册、存档读写与 Cookie 下发。
 - 本机可跑一次浏览器端存档验收：先 `npm run dev`，再 `npm run verify:save`（断言旧 v2 档可读、四个记账字段真实落盘、余额不超过累计获得、整条路径无运行时报错）。该脚本需要 Playwright 浏览器，因此不纳入 `npm test`（CI 不安装浏览器）。
 - 50 个关卡使用固定种子和自动玩家跑到结算，检查无卡死和非法资源；胜负取决于自动策略与当前难度。此检查**不代表全部关卡已经通过人工通关验收**。

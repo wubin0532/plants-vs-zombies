@@ -12,7 +12,8 @@ function cookieFrom(response) {
 }
 
 async function startServer(extraEnv, options) {
-  const dataDir = await mkdtemp(path.join(tmpdir(), 'garden-api-'));
+  // options.dataDir 用于"重启同一个后端"的测试（例如重置密码后必须重启才生效）。
+  const dataDir = (options && options.dataDir) || (await mkdtemp(path.join(tmpdir(), 'garden-api-')));
   // 显式传 undefined 视为"不注入这个变量"，好让 .env 里的值成为唯一来源。
   const env = Object.assign({}, process.env, { DATA_DIR: dataDir, PORT: '0', MAX_USERS: '2' });
   for (const key of Object.keys(extraEnv || {})) {
@@ -57,8 +58,17 @@ async function startServer(extraEnv, options) {
     dataDir: dataDir,
     child: child,
     stop: async function () {
-      child.kill();
-      await rm(dataDir, { recursive: true, force: true });
+      // 必须等进程真正退出：否则旧进程内存里的 usersCache 会在退出前再写一次
+      // users.json，把外部刚改好的内容覆盖回去（重置密码类测试会因此假失败）。
+      await new Promise(function (resolve) {
+        if (child.exitCode !== null || child.signalCode !== null) return resolve();
+        child.once('exit', function () { resolve(); });
+        child.kill();
+        setTimeout(function () { resolve(); }, 3000);
+      });
+      // keepDataDir / 复用外部 dataDir 时不删：调用方要拿它重启后端做后续断言。
+      if (!(options && (options.dataDir || options.keepDataDir)))
+        await rm(dataDir, { recursive: true, force: true });
     },
   };
 }
@@ -535,5 +545,101 @@ describe('garden-api · 限流桶容量上限', () => {
     // old 已过期：新键应被接纳，而不是因为 Map 满被拒。
     expect(limited('fresh')).toBe(false);
     expect(limited('fresh')).toBe(false);
+  });
+});
+
+describe('garden-api · 忘记密码重置', () => {
+  it('重置密码后保留存档，旧密码失效、新密码可用', async () => {
+    // keepDataDir：本用例要在 stop() 之后用同一个数据目录重启后端。
+    const server = await startServer({ RATE_LIMIT_MAX: '50' }, { keepDataDir: true });
+    const { spawnSync } = await import('node:child_process');
+    const runReset = (args) =>
+      spawnSync(process.execPath, [path.join(process.cwd(), 'server/reset-password.mjs'), ...args], {
+        cwd: process.cwd(),
+        encoding: 'utf8',
+        env: Object.assign({}, process.env, { DATA_DIR: server.dataDir }),
+      });
+    try {
+      const c = makeClient(server.base);
+      const name = 'forgot_' + Date.now().toString(36);
+      const oldPassword = 'old-password-1';
+      const newPassword = 'new-password-2';
+
+      const register = await c.post('/api/auth/register', { username: name, password: oldPassword });
+      expect(register.status).toBe(200);
+      const cookie = cookieFrom(register);
+      const put = await c.putSave(cookie, { version: 2, unlocked: 9, coins: 321, completed: [1, 2, 3, 4, 5, 6, 7, 8] });
+      expect(put.status).toBe(200);
+
+      // 用同一个 DATA_DIR 调脚本，模拟运维在容器里执行重置。
+      const listed = runReset([name, '--list']);
+      expect(listed.status).toBe(0);
+      expect(listed.stdout).toContain('存档=有');
+
+      const reset = runReset([name, '--password', newPassword]);
+      expect(reset.status, reset.stderr).toBe(0);
+      expect(reset.stdout).toContain('已重置');
+
+      // 运行中的服务把 users.json 缓存在内存里 → 必须重启才生效。
+      // 注意：stop() 会清掉本次测试自己创建的 dataDir，所以落盘内容的断言放在重启之后。
+      await server.stop();
+      const restarted = await startServer({ RATE_LIMIT_MAX: '50' }, { dataDir: server.dataDir });
+      try {
+        const c2 = makeClient(restarted.base);
+        const stale = await c2.post('/api/auth/login', { username: name, password: oldPassword });
+        expect(stale.status, '旧密码必须失效').toBe(401);
+        const fresh = await c2.post('/api/auth/login', { username: name, password: newPassword });
+        expect(fresh.status, '新密码必须可用').toBe(200);
+        const loginPayload = await fresh.json();
+        const userId = loginPayload.user.id;
+
+        // 关键点：存档跟着 user.id 走，重置密码不该动它。
+        const read = await fetch(restarted.base + '/api/save', { headers: { Cookie: cookieFrom(fresh) } });
+        const payload = await read.json();
+        expect(payload.save.data).toMatchObject({ unlocked: 9, coins: 321 });
+        expect(payload.save.data.completed).toHaveLength(8);
+
+        const stored = JSON.parse(await readFile(path.join(restarted.dataDir, 'users.json'), 'utf8'));
+        const user = stored.find((u) => u.id === userId);
+        expect(user, '账号不应被重建（id 保持不变）').toBeDefined();
+        expect(user.name).toBe(name);
+        expect(user.hash, '哈希应升级为带参数的格式').toMatch(/^v1\$/);
+      } finally {
+        await restarted.stop();
+      }
+    } finally {
+      // 上面已经 stop 过一次；stop() 是幂等的（child 已退出）。
+      await server.stop();
+      await rm(server.dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it('密码太短或账号不存在时不改动账号库', async () => {
+    const { spawnSync } = await import('node:child_process');
+    const server = await startServer({ RATE_LIMIT_MAX: '50' });
+    try {
+      const c = makeClient(server.base);
+      const name = 'short_' + Date.now().toString(36);
+      await c.post('/api/auth/register', { username: name, password: 'good-password' });
+      const before = await readFile(path.join(server.dataDir, 'users.json'), 'utf8');
+
+      const run = (args) =>
+        spawnSync(process.execPath, [path.join(process.cwd(), 'server/reset-password.mjs'), ...args], {
+          cwd: process.cwd(),
+          encoding: 'utf8',
+          env: Object.assign({}, process.env, { DATA_DIR: server.dataDir }),
+        });
+      const tooShort = run([name, '--password', '1234']);
+      expect(tooShort.status).not.toBe(0);
+      expect(tooShort.stderr).toContain('8-128');
+      const missing = run(['no-such-user-xyz', '--password', 'good-password']);
+      expect(missing.status).not.toBe(0);
+      expect(missing.stderr).toContain('没有名为');
+
+      const after = await readFile(path.join(server.dataDir, 'users.json'), 'utf8');
+      expect(after).toBe(before);
+    } finally {
+      await server.stop();
+    }
   });
 });

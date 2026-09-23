@@ -10,7 +10,8 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 
 echo "==> 1/4 上传后端代码到 $NAS:$APP_HOST_DIR"
 ssh "$NAS" "mkdir -p $APP_HOST_DIR"
-scp -q "$ROOT/server/store.mjs" "$ROOT/server/auth.mjs" "$ROOT/server/index.mjs" "$NAS:$APP_HOST_DIR/"
+scp -q "$ROOT/server/store.mjs" "$ROOT/server/auth.mjs" "$ROOT/server/index.mjs" \
+  "$ROOT/server/reset-password.mjs" "$NAS:$APP_HOST_DIR/"
 
 echo "==> 2/4 准备数据目录"
 ssh "$NAS" "mkdir -p /vol1/1000/Docker/Data/garden"
@@ -30,6 +31,7 @@ echo "    已存在且目标正确"
 
 echo "==> 4/4 在 NAS 上启动容器并重载 Nginx（会提示输入 sudo 密码）"
 scp -q "$ROOT/deploy/remote-garden-setup.sh" "$NAS:$APP_HOST_DIR/remote-garden-setup.sh"
+scp -q "$ROOT/deploy/reset-garden-password.sh" "$NAS:$APP_HOST_DIR/reset-garden-password.sh"
 ssh -t "$NAS" "bash $APP_HOST_DIR/remote-garden-setup.sh"
 
 echo "==> 完成。游戏地址 http://192.168.199.5:$GAME_PORT"
