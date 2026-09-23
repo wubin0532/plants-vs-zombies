@@ -56,7 +56,8 @@ else
     echo "   scp deploy/reset-garden-password.sh ${NAS}:${APP_HOST_DIR}/" >&2
     exit 1
   fi
-  if ! ssh "$NAS" "$SUDO test -f $REMOTE_SCRIPT"; then
+  # 只用普通用户检查存在性：sudo 在无终端时无法读密码，会把"存在"误判成"缺失"。
+  if ! ssh -o BatchMode=yes "$NAS" "test -f $REMOTE_SCRIPT"; then
     echo "!! NAS 上找不到 ${REMOTE_SCRIPT}。" >&2
     echo "   先补传后端文件（deploy-garden.sh 会带上它）：" >&2
     echo "   scp server/reset-password.mjs ${NAS}:${APP_HOST_DIR}/" >&2
