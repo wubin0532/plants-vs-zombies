@@ -1674,10 +1674,14 @@ export class Engine {
           this.fogClear = 20;
           this.effect(p.col, p.row, "wind", p.id);
         }
-        if (d.kind === "grave")
+        if (d.kind === "grave") {
           this.tiles = this.tiles.filter(
             (t) => !(t.row === p.row && t.col === p.col),
           );
+          // 地形贴图按 tilesVersion 缓存：不递增的话墓碑被吃掉后仍留在画面上。
+          this.tilesVersion++;
+          this.effect(p.col, p.row, "dust", p.id);
+        }
         this.remove(p);
         continue;
       }
@@ -1732,7 +1736,9 @@ export class Engine {
       if (d.kind === "spike" && p.timer <= 0) {
         for (const z of targets)
           if (z.row === p.row && Math.abs(z.x - p.col) < 0.6 && !z.flying) {
-            this.damage(z, d.damage!, true);
+            // 刺伤先被护甲吸收（路障/铁桶/铁门/头盔都克制地刺），
+            // 不再穿透本体——否则满铺地刺就能无视一切护甲通关。
+            this.damage(z, d.damage!);
             if (["zomboni", "catapult"].includes(z.id)) {
               z.hp = 0;
               this.livingCache = null;
@@ -2259,7 +2265,12 @@ export class Engine {
                 p.row === z.row &&
                 Math.abs(p.col - z.x) < 0.7,
             );
-            if (victim) victim.hp = 0;
+            // 巨人砸击：普通植物一锤秒杀；地刺类抗砸一次（地刺王一锤 300，
+            // 900 血恰好扛三锤），与车辆碾压的耐久规则一致。
+            if (victim) {
+              const kind = plantById[victim.id].kind;
+              victim.hp = kind === "spike" ? Math.max(0, victim.hp - 300) : 0;
+            }
           }
           this.effect(z.x - 0.35, z.row, "smash", "garg");
         }
@@ -2381,7 +2392,8 @@ export class Engine {
     for (const p of this.plants) {
       if (p.row !== z.row || p.hp <= 0) continue;
       if (Math.abs(p.col - z.x) >= 0.45) continue;
-      if (plantById[p.id].kind === "spike") continue;
+      // 普通僵尸不会啃地刺（直接从上面走过）；巨人僵尸会一锤砸掉它。
+      if (plantById[p.id].kind === "spike" && z.id !== "garg") continue;
       const rank = LAYER_RANK[p.layer];
       if (rank < targetRank) {
         targetRank = rank;

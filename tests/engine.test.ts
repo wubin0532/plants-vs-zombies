@@ -108,10 +108,14 @@ describe("场地与能力", () => {
     e.sun = 500;
     const t = e.tiles[0];
     expect(e.plant("grave", t.row, t.col)).toBe(true);
+    const version = e.tilesVersion;
     run(e, 1.2);
     expect(
       e.tiles.find((x) => x.row === t.row && x.col === t.col),
     ).toBeUndefined();
+    expect(e.tilesVersion, "吃掉墓碑后必须递增地形版本号").toBeGreaterThan(
+      version,
+    );
   });
   it("传送带不消耗阳光并消耗种子，保龄球会滚动", () => {
     const e = new Engine(5, ["wallnut"]);

@@ -237,7 +237,7 @@ export const plants: PlantDef[] = [
     "spike",
     27,
     "#b89c72",
-    "持续伤害走过的僵尸，并扎破车辆。",
+    "持续刺伤走过的僵尸；护甲会吸收刺伤，请配合射手、磁力菇或寒冰使用。还能扎破冰车与投石车。",
     { damage: 15, interval: 1 },
   ),
   p(
@@ -451,7 +451,7 @@ export const plants: PlantDef[] = [
     "spike",
     51,
     "#9ba2a0",
-    "升级地刺，造成双倍伤害并承受多次碾压。",
+    "升级地刺，造成双倍伤害；能承受多次碾压与巨人砸击。",
     { upgrade: "spike", hp: 900, damage: 30, interval: 1, cooldown: 50 },
   ),
   p(

@@ -90,19 +90,70 @@ it("寒冰豌豆被铁栅门挡下时不施加冻缓，破门后才减速", () =
   expect(broken.slow, "打中本体应施加冻缓").toBeGreaterThan(0);
 });
 
-it("爆炸与地刺仍然直接伤及本体（设计如此）", () => {
+it("爆炸直接伤及本体，但地刺的刺伤会被护甲挡下", () => {
   const e = new Engine(1, []);
   e.spawn("football", 0, 4);
   const z = e.zombies[0];
   e.blast(4, 0, 1.5);
   expect(z.hp).toBeLessThanOrEqual(0);
 
+  // 平衡性：地刺不再无视护甲，否则满铺地刺即可无视一切护甲通关。
   const spike = new Engine(1, []);
   spike.spawn("bucket", 0, 4);
   const bucket = spike.zombies[0];
   fire(spike, "spike", 0, 4);
-  expect(bucket.hp, "地刺扎脚，无视头盔").toBeLessThan(bucket.max);
-  expect(bucket.armor).toBe(bucket.maxArmor);
+  expect(bucket.hp, "护甲应该保护本体不被刺伤穿透").toBe(bucket.max);
+  expect(bucket.armor, "铁桶应该先吸收刺伤").toBeLessThan(bucket.maxArmor);
+
+  // 护甲耗尽后刺伤开始掉本体血量。
+  const bare = new Engine(1, []);
+  bare.spawn("bucket", 0, 4);
+  bare.zombies[0].armor = 0;
+  const body = bare.zombies[0];
+  fire(bare, "spike", 0, 4);
+  expect(body.hp, "破甲后地刺照常伤害本体").toBeLessThan(body.max);
+});
+
+it("巨人僵尸会砸掉地刺，地刺王能扛住多次砸击", () => {
+  // 返回砸毁植物所需的模拟步数（1/30 秒每步）。
+  const crush = (id: string) => {
+    const e = new Engine(1, []);
+    const p = e.addPlant(id, 0, 4);
+    e.spawn("garg", 0, 4.2);
+    let steps = 0;
+    for (; steps < 900 && p.hp > 0; steps++) e.step(1 / 30);
+    return steps;
+  };
+  const weedSteps = crush("spike");
+  const rockSteps = crush("spikerock");
+  expect(weedSteps, "地刺应该被巨人砸掉").toBeLessThan(900);
+  expect(rockSteps, "地刺王 900 血，每锤 300，应明显扛得更久").toBeGreaterThan(
+    weedSteps,
+  );
+});
+
+it("平衡性：满铺一行地刺耗得死普通僵尸，但护甲僵尸能突破", () => {
+  const siege = (id: string) => {
+    const e = new Engine(1, [], 7, {
+      difficulty: "custom",
+      minutes: 5,
+      density: 1,
+      health: 1,
+      speed: 1,
+      sun: 150,
+      prep: 10,
+      mowers: false,
+    });
+    e.schedule = [];
+    for (let c = 0; c < 9; c++) e.addPlant("spike", 0, c);
+    e.spawn(id, 0, 9);
+    for (let i = 0; i < 1400 && e.status === "playing"; i++) e.step(0.1);
+    return e;
+  };
+  const basic = siege("basic");
+  expect(basic.status, "普通僵尸应被满铺地刺耗死").toBe("playing");
+  const bucket = siege("bucket");
+  expect(bucket.status, "铁桶僵尸应突破纯地刺防线").toBe("lost");
 });
 
 it("磁力菇吸走头盔、铁门、梯子、跳杆、矿镐与玩偶匣", () => {
