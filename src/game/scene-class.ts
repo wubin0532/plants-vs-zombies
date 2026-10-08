@@ -20,7 +20,7 @@ import {
   plantHeadPose,
   zombieMotionInto,
 } from "./animation";
-import { plantScale, zombieScale } from "./proportions";
+import { plantScale, zombieScale, plantDisplaySize, POT_LIFT } from "./proportions";
 import { tokenPose, weatherOpacity, WIND_DURATION, OVERCAST_DURATION, BLAZING_DURATION, BLACKOUT_DURATION } from "./ambient";
 import { drawWeather } from "./ambient-render";
 import type { GardenAudio } from "./audio";
@@ -177,6 +177,8 @@ export class GardenScene extends Phaser.Scene {
   /** 复用同一对象承载僵尸姿态，避免每只僵尸每帧分配。 */
   private poseScratch = { angle: 0, lift: 0 };
   keep = new Set<string>();
+  /** 本帧的「盆栽格」（row*9+col）：把花盆上的植物抬到盆口土面上。复用不分配。 */
+  potCells = new Set<number>();
   hover!: Phaser.GameObjects.Rectangle;
   cursorBox!: Phaser.GameObjects.Rectangle;
   /** 草坪网格：平时隐藏，只有选卡/放置时淡入。 */
@@ -513,6 +515,11 @@ export class GardenScene extends Phaser.Scene {
         (displayId === "snowpea" || displayId === "arc")
           ? "b-" + (displayId === "snowpea" ? "ice" : "electric")
           : "";
+      // 预览必须与落点一致：在屋顶花盆上种植物时，预览同样抬到盆口土面。
+      const ghostLift =
+        displayId !== "pot" && e.at(row, col, "base")?.id === "pot"
+          ? POT_LIFT
+          : 0;
       this.ghost
         .setTexture(bowl || (isChomper ? "chomper-motion" : displayId))
         // 立绘纹理被程序加了 roots/head 具名帧，数字帧 0 不再是整张图，必须用
@@ -522,11 +529,11 @@ export class GardenScene extends Phaser.Scene {
         .setCrop()
         .setOrigin(0.5, isChomper ? 249 / 256 : 0.95)
         .setDisplaySize(
-          86 * plantScale(displayId),
-          86 * plantScale(displayId),
+          plantDisplaySize(displayId) * plantScale(displayId),
+          plantDisplaySize(displayId) * plantScale(displayId),
         )
         .setAlpha(0.82)
-        .setPosition(this.x(col), feetY(row, e.level.rows))
+        .setPosition(this.x(col), feetY(row, e.level.rows) - ghostLift)
         .setVisible(true);
       if (reason) this.ghost.setTint(0xe05545); else this.ghost.clearTint();
     }
@@ -677,12 +684,19 @@ export class GardenScene extends Phaser.Scene {
         g.strokeCircle(this.x(source ? source.col : bowl!.x), this.y(source ? source.row : bowl!.row), 37);
       }
     }
+    // 花盆是容器：先收集本帧的盆栽格，供植物抬升与叠加件对齐使用
+    // （不限于屋顶——花盆卡也能种在陆地草坪上）。
+    this.potCells.clear();
+    for (const q of e.plants)
+      if (q.id === "pot" && q.hp > 0) this.potCells.add(q.row * 9 + q.col);
     for (const p of e.plants) {
       const key = "p" + p.uid;
       keep.add(key);
       const base = p.layer === "base",
         bodyScale = plantScale(p.id),
         motion = isMotionPlant(p.id);
+      const lift = !base && this.potCells.has(p.row * 9 + p.col) ? POT_LIFT : 0;
+      const display = plantDisplaySize(p.id) * bodyScale;
       const stable =
         base ||
         [
@@ -714,19 +728,15 @@ export class GardenScene extends Phaser.Scene {
             ? "plantanim-" + p.id
             : p.id,
         this.x(p.col) + (p.hurt ? Math.sin(p.hurt * 65) * 3 : 0),
-        feetY(p.row, e.level.rows) + idle.offsetY,
-        (base ? 90 : 86) * bodyScale,
-        (base ? 45 : 86) * bodyScale,
+        feetY(p.row, e.level.rows) + idle.offsetY - lift,
+        display,
+        display,
         p.row * 10 + (base ? 1 : p.layer === "armor" ? 4 : 3),
       );
       if (p.id === "chomper")
-        obj
-          .setFrame(chomperFrame(p))
-          .setDisplaySize(86 * bodyScale, 86 * bodyScale);
+        obj.setFrame(chomperFrame(p)).setDisplaySize(display, display);
       else if (motion)
-        obj
-          .setFrame(plantMotionFrame(p))
-          .setDisplaySize(86 * bodyScale, 86 * bodyScale);
+        obj.setFrame(plantMotionFrame(p)).setDisplaySize(display, display);
       obj
         .setOrigin(0.5, p.id === "chomper" || motion ? 249 / 256 : 0.95)
         .setAlpha(p.sleep ? 0.65 : 1);
@@ -780,7 +790,7 @@ export class GardenScene extends Phaser.Scene {
       const accent = plantAccent(p);
       if (accent) {
         const k = key+'accent'; keep.add(k);
-        this.sprite(k,'art-'+accent.image,obj.x,feetY(p.row,e.level.rows)+accent.offsetY,
+        this.sprite(k,'art-'+accent.image,obj.x,feetY(p.row,e.level.rows)+accent.offsetY-lift,
           70*accent.scale*bodyScale,70*accent.scale*bodyScale,obj.depth+.3)
           .setAlpha(accent.alpha).setAngle(accent.angle);
       }
@@ -797,12 +807,14 @@ export class GardenScene extends Phaser.Scene {
       }
       if (p.hp < p.max || plantById[p.id].hp > 300) {
         const barWidth = 44 * bodyScale;
+        // 血条跟着植物走：盆栽植物被抬高后，血条不能留在盆底。
+        const barY = this.y(p.row) + 34 - lift;
         g.fillStyle(0x344638);
-        g.fillRoundedRect(this.x(p.col) - barWidth / 2, this.y(p.row) + 34, barWidth, 5, 2);
+        g.fillRoundedRect(this.x(p.col) - barWidth / 2, barY, barWidth, 5, 2);
         g.fillStyle(0xa7d363);
         g.fillRoundedRect(
           this.x(p.col) - barWidth / 2,
-          this.y(p.row) + 34,
+          barY,
           barWidth * healthFraction(p.hp, p.max),
           5,
           2,

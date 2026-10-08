@@ -329,12 +329,13 @@ export const plants: PlantDef[] = [
     "卷心菜投手",
     100,
     "lob",
-    41,
+    42,
     "#9bb962",
     "抛射卷心菜，适合屋顶战斗。",
     { damage: 40, interval: 2.8 },
   ),
-  p("pot", "花盆", 25, "base", 42, "#be7d55", "在屋顶上为植物提供种植位置。"),
+  // 花盆与卷心菜的顺序对齐原版：5-1 给屋顶的地形底座，5-2 才给第一个投手。
+  p("pot", "花盆", 25, "base", 41, "#be7d55", "在屋顶上为植物提供种植位置。"),
   p(
     "kernel",
     "玉米投手",
@@ -646,8 +647,9 @@ export const levels: Level[] = Array.from({ length: 50 }, (_, i) => {
       "basic",
       "cone",
       "bucket",
-      "bungee",
-      ...(stage >= 2 ? ["ladder"] : []),
+      // 蹦极的唯一克星（叶子保护伞）要到 47 关才解锁：5-1 只让玩家适应
+      // 「花盆 + 斜坡」这一个新机制，蹦极与扶梯从 5-2 起再出现。
+      ...(stage >= 2 ? ["bungee", "ladder"] : []),
       ...(stage >= 3 ? ["catapult"] : []),
       ...(stage >= 6 ? ["garg"] : []),
     ];
@@ -687,7 +689,12 @@ export function recommendCards(level: Level, unlocked: string[], slots: number):
   const night = isNight(level.scene);
   if (night) first("sunshroom", "sunflower"); else push("sunflower");
   if (level.rows === 6) push("lily");
-  if (level.scene === "roof") { push("pot"); first("cabbage", "kernel", "melon"); }
+  // 屋顶：花盆是唯一的地形底座；投手能越过斜坡更稳，但 5-1 还没解锁投手，
+  // 必须退回首射，否则推荐阵容里会没有可用的攻击植物。
+  if (level.scene === "roof") {
+    push("pot");
+    first("cabbage", "kernel", "melon", "pea", "repeater", "snowpea");
+  }
   else if (night) first("fume", "pea", "puff");
   else first("pea", "repeater");
   if (level.scene === "fog" && level.mode !== "vases") push("lantern");

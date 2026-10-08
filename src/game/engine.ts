@@ -39,6 +39,12 @@ const MAGNET_TARGETS = new Set(["bucket", "screen", "football"]);
 const MAGNET_TOOLS = new Set(["pogo", "digger", "ladder", "jack"]);
 /** Zombie bite order: shell first, then the main plant, then the support base. */
 const LAYER_RANK: Record<Plant["layer"], number> = { armor: 0, main: 1, base: 2 };
+/**
+ * 屋顶前 4 列是斜坡：斜坡上的有形直射打不到越过屋脊的目标，投手（lob）的
+ * 抛物线不受限制。这是有意保留的设定，不是平衡参数。
+ * 例外：电弧花（electric）是瞬发能量攻击，有意绕过斜坡限制（见 electric 分支）。
+ */
+const ROOF_RIDGE_COL = 4;
 export type Plant = {
   uid: number;
   hurt?: number;  id: string;
@@ -261,6 +267,8 @@ export class Engine {
   }[] = [];
   private uid = 1;
   private guided = new Set<string>();
+  /** 屋顶斜坡拦截的说明只给一次，避免每帧刷屏。 */
+  private roofSlopeTold = false;
   private livingCache: Zombie[] | null = null;
   private queuedMessages: string[] = [];
   private wavePlan: string[] = [];
@@ -331,7 +339,7 @@ export class Engine {
     if (this.level.scene === "fog" && this.level.mode === "normal")
       this.say("夜间泳池没有天降阳光：睡莲承载水路火力，路灯花照亮右侧迷雾");
     if (this.level.scene === "roof")
-      for (let r = 0; r < 5; r++)
+      for (let r = 0; r < this.level.rows; r++)
         for (let c = 0; c < 3; c++) this.addPlant("pot", r, c);
     if (this.level.mode === "vases") {
       for (let r = 0; r < 6; r++)
@@ -556,6 +564,25 @@ export class Engine {
     this.say(text);
     return true;
   }
+  /**
+   * 屋顶斜坡挡直射：种在斜坡（前 ROOF_RIDGE_COL 列）的直射植物打不到已经
+   * 越过屋脊的目标；投手（lob）不受限制。边界用目标中心列判定，和啃食判定
+   * 的 |col - x| < 0.45 对齐——目标中心进入第 5 列即视为已离开斜坡。
+   */
+  private roofSlopeBlocks(p: Plant, x: number, kind: string) {
+    return (
+      this.level.scene === "roof" &&
+      p.col < ROOF_RIDGE_COL &&
+      kind !== "lob" &&
+      x > ROOF_RIDGE_COL
+    );
+  }
+  /** 首次被斜坡拦下时解释一次：射手不是坏了，而是斜坡挡住了直射。 */
+  private noteRoofSlope() {
+    if (this.roofSlopeTold) return;
+    this.roofSlopeTold = true;
+    this.say("斜坡挡住直射：把花盆铺到后面的平屋顶，射手才能打到远处");
+  }
   warnDanger(id: string) {
     if (!DANGER_ZOMBIES.has(id) || this.alerted.has(id)) return;
     this.alerted.add(id);
@@ -665,6 +692,14 @@ export class Engine {
       base = this.at(row, col, "base");
     if (d.id === "grave") return tile?.type === "grave" ? "" : "只能种在墓碑上";
     if (d.id === "coffee") return main?.sleep ? "" : "请选择一株睡着的蘑菇";
+    // 地刺/地刺王只能铺在陆地：与移植规则（toolTargetReason）一致，
+    // 水路与屋顶都不接受（屋顶即使有花盆也不行）。要先于升级卡判定，
+    // 否则地刺王会报「需要种在对应的基础植物上」而掩盖真正的场景限制。
+    if (
+      ["spike", "spikerock"].includes(d.id) &&
+      (this.water(row) || this.level.scene === "roof")
+    )
+      return "地刺只能种在陆地";
     if (d.upgrade) {
       if (
         d.id === "cob" &&
@@ -682,8 +717,10 @@ export class Engine {
           ? "这里已经有睡莲"
           : "";
     if (d.id === "pot")
-      return this.water(row)
-        ? "花盆不能种在水上"
+      // 花盆是屋顶专属的地形底座：与睡莲「只能种在水上」对称，
+      // 也和每日卡池把花盆限定为屋顶场景相关一致（陆地铺花盆只是白占卡槽）。
+      return this.level.scene !== "roof"
+        ? "花盆只能种在屋顶"
         : base || main
           ? "这里已经有植物"
           : "";
@@ -795,7 +832,11 @@ export class Engine {
       );
     if (destroyed) this.plantsLost += before - this.plants.length;
   }
-  private shovelConfirm: { row: number; col: number; until: number } | null = null;
+  /**
+   * 铲子只铲该格最上层：保护壳 → 主体 → 底座。
+   * 花盆/睡莲上的植物被铲掉后底座留在原地（与移植工具的「底座留在原地」一致），
+   * 想拆底座就再铲一次——那时该格已空置，不会再连带别的植物。
+   */
   shovel(row: number, col: number) {
     if (this.paused || this.status !== "playing") return;
     const p =
@@ -803,31 +844,8 @@ export class Engine {
       this.at(row, col, "main") ||
       this.at(row, col, "base");
     if (!p) return;
-    // 铲掉底座（睡莲/花盆）会连带清掉整格植物，误点代价高：
-    // 首次点击不执行，只提示并进入 3 秒确认窗口；窗口内再铲同格才整格移除。
-    const base = this.at(row, col, "base");
-    if (
-      base &&
-      base.hp > 0 &&
-      this.plants.some(
-        (q) => q.uid !== base.uid && q.row === row && q.col === col && q.hp > 0,
-      )
-    ) {
-      const pending = this.shovelConfirm;
-      this.shovelConfirm = null;
-      if (pending && pending.row === row && pending.col === col && this.time <= pending.until) {
-        this.remove(base);
-        this.effect(col, row, "plant");
-      } else {
-        this.shovelConfirm = { row, col, until: this.time + 3 };
-        this.say(
-          `${plantById[base.id].name}上还种着植物，3 秒内再铲一次将整格移除`,
-          "alert",
-        );
-      }
-      return;
-    }
-    // remove() 会连带移除玉米炮配对的另一半。
+    // remove() 会连带移除玉米炮配对的另一半；p 为底座时该格已无 armor/main，
+    // remove() 的整格级联不会波及别的植物。
     this.remove(p);
     this.effect(col, row, "plant");
   }
@@ -1772,6 +1790,8 @@ export class Engine {
       }
       if (d.kind === "cannon" && p.timer <= 0) p.ready = true;
       if (d.kind === "electric" && p.timer <= 0) {
+        // 电弧是瞬发能量攻击、没有弹丸飞行，有意不受屋顶斜坡限制：
+        // 斜坡只拦有形直射（见 roofSlopeBlocks）。
         const target = ahead.find(z => electricTarget(z) && z.x >= p.col);
         if (target) {
           p.attackAge = 0;
@@ -1845,17 +1865,10 @@ export class Engine {
             const behind = targets
               .filter((z) => z.row === p.row && !z.flying && z.x < p.col - 0.2)
               .sort((a, b) => b.x - a.x)[0];
-            if (
-              ahead[0] &&
-              !(
-                this.level.scene === "roof" &&
-                p.col < 4 &&
-                ahead[0].x > 4
-              )
-            ) {
+            if (ahead[0] && !this.roofSlopeBlocks(p, ahead[0].x, d.kind)) {
               this.shoot(p, ahead[0], d.damage!);
               fired = true;
-            }
+            } else if (ahead[0]) this.noteRoofSlope();
             if (behind) {
               this.shoot(p, behind, d.damage!);
               this.shoot(p, behind, d.damage!, undefined, {
@@ -1892,13 +1905,10 @@ export class Engine {
                 )
               )
                 continue;
-              if (
-                this.level.scene === "roof" &&
-                p.col < 4 &&
-                d.kind !== "lob" &&
-                z.x > 4
-              )
+              if (this.roofSlopeBlocks(p, z.x, d.kind)) {
+                this.noteRoofSlope();
                 continue;
+              }
               this.shoot({ ...p, row: lane }, z, d.damage!);
               // 双发/机枪真实连发：每颗独立结算，前一目标死亡不吞掉后续弹丸。
               if (lane === p.row)

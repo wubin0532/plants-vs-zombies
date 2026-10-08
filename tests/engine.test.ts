@@ -66,7 +66,10 @@ describe("场地与能力", () => {
     expect(e.plant("lily", 2, 0)).toBe(true);
     expect(e.plant("pea", 2, 0)).toBe(true);
     e.shovel(2, 0);
+    // 铲子只铲掉睡莲上的豌豆：底座留在原地（不带层过滤的 at() 返回的正是睡莲）。
     expect(e.at(2, 0)?.id).toBe("lily");
+    expect(e.at(2, 0, "main")).toBeUndefined();
+    expect(e.plants.map((p) => p.id)).toEqual(["lily"]);
   });
   it("屋顶花盆约束与蘑菇睡眠、咖啡唤醒", () => {
     const e = new Engine(44, ["puff", "coffee"]);
