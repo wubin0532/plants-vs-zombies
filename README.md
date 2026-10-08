@@ -43,12 +43,12 @@ Nginx runs in a container and the `garden-api` backend in its own container; bot
    ./deploy/deploy-garden.sh
    ```
 
-   It uploads `server/*.mjs` to `/vol1/1000/Docker/garden-server/`, starts `garden-api` on the NAS as `admin(1000:1001)`, and reloads Nginx after `nginx -t` passes.
+   It uploads `server/*.mjs` to `/vol1/1000/Docker/garden/backend/`, starts `garden-api` on the NAS as `admin(1000:1001)`, and reloads Nginx after `nginx -t` passes.
 
 2. You can also run the setup script on the NAS alone:
 
    ```sh
-   ssh -t fnos 'bash /vol1/1000/Docker/garden-server/remote-garden-setup.sh'
+   ssh -t fnos 'bash /vol1/1000/Docker/garden/backend/remote-garden-setup.sh'
    ```
 
 3. The game site in Nginx only needs a proxy block (template in `deploy/nginx-garden-api.conf`):
@@ -68,17 +68,27 @@ Nginx runs in a container and the `garden-api` backend in its own container; bot
 4. Verify: `curl http://192.168.199.5:5888/api/health` should return `{"ok":true,"users":0,"maxUsers":5}`. The deploy script fails outright if the proxy block is missing or does not target `garden-api:8787`, and exits non-zero on a failed health check.
 
 > **Upgrading from the old topology (host port 8787)**: run once on the NAS
-> `sudo bash /vol1/1000/Docker/garden-server/migrate-garden-net.sh`.
+> `sudo bash /vol1/1000/Docker/garden/backend/migrate-garden-net.sh`.
 > The script is idempotent and zero-downtime: it starts the new container under the alias `garden-api`, and only after `nginx -t` passes and the health check succeeds removes the old container; any failure automatically restores the old config and keeps the old container.
 > Because session tokens switched to a versioned format, old login cookies become invalid after the switch and players must log in again.
 
-**Data and backups**: accounts, saves, and `secret.key` all live in `/vol1/1000/Docker/Data/garden/` (`/data/garden` inside the container, owned by `admin`). Backup command:
+#### Deploying the frontend (static site)
+
+`deploy-garden.sh` only ships the backend. The built site is served by the `nginx` container from a directory on the NAS (`/vol1/1000/Docker/garden/frontend-dist` → `/usr/share/nginx/web/game/zw` in this setup):
 
 ```sh
-ssh fnos 'tar czf /vol1/1000/Docker/Data/garden-backup-$(date +%F).tar.gz -C /vol1/1000/Docker/Data garden'
+./deploy/deploy-site.sh
 ```
 
-**Starting over**: `ssh -t fnos 'bash /vol1/1000/Docker/garden-server/reset-garden-data.sh'`. The service caches the user table in memory; after manually deleting files you must restart the container for it to take effect.
+It builds `dist/`, keeps a timestamped copy of the remote `index.html` (rollback = copy it back), streams the build into the site directory without deleting the previous hashed bundles, then checks that the new entry bundle is really served and `/api/health` still answers. `index.html` is sent `no-cache`, so players pick up a new build on the next load; the per-build `?v=` on asset URLs makes them re-download once after each deploy.
+
+**Data and backups**: accounts, saves, and `secret.key` all live in `/vol1/1000/Docker/garden/data/` (`/data/garden` inside the container, owned by `admin`). Backup command:
+
+```sh
+ssh fnos '/vol1/1000/Docker/garden/backup.sh'
+```
+
+**Starting over**: `ssh -t fnos 'bash /vol1/1000/Docker/garden/backend/reset-garden-data.sh'`. The service caches the user table in memory; after manually deleting files you must restart the container for it to take effect.
 
 **Forgot password**: use the bundled reset script. It only replaces the password hash and **keeps the `user.id` and the cloud save**.
 
@@ -90,11 +100,11 @@ One command from the Mac (SSHes to the NAS, enters the container, resets; withou
 ssh fnos 'sudo docker restart garden-api'         # required: users.json is cached in memory
 ```
 
-On the NAS itself run `sudo bash /vol1/1000/Docker/garden-server/reset-garden-password.sh <username>`,
+On the NAS itself run `sudo bash /vol1/1000/Docker/garden/backend/reset-garden-password.sh <username>`,
 or call the underlying script directly: `sudo docker exec -it garden-api node /app/server/reset-password.mjs <username>`.
 `SUDO=`, `DOCKER=`, `NAS=`, `CONTAINER=` and `APP_HOST_DIR=` can be overridden (use `SUDO= ` when running as root).
 
-Outside the container, point `DATA_DIR` at the data directory, e.g. `DATA_DIR=/vol1/1000/Docker/Data/garden npm run reset-password -- <username>`.
+Outside the container, point `DATA_DIR` at the data directory, e.g. `DATA_DIR=/vol1/1000/Docker/garden/data npm run reset-password -- <username>`.
 Progress is preserved because the save file is named after `user.id`; this differs from "delete the account and re-register", which discards the save too.
 
 `deploy/docker-compose.garden.yml` provides an equivalent compose setup (external network `garden-net`, running as `1000:1001`) for merging into existing orchestration; `deploy/nginx.conf` is a pure-static deployment example with security response headers and cache policies split between hashed and fixed-name assets.

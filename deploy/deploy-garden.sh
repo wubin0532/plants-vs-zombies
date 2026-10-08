@@ -3,8 +3,8 @@
 set -euo pipefail
 
 NAS=fnos
-APP_HOST_DIR=/vol1/1000/Docker/garden-server
-NGINX_CONF=/vol1/1000/Docker/chinese-chess/confdata/default.conf
+APP_HOST_DIR=/vol1/1000/Docker/garden/backend
+NGINX_CONF=/vol1/1000/Docker/nginx/conf.d/garden.conf
 GAME_PORT=5888
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 
@@ -14,7 +14,7 @@ scp -q "$ROOT/server/store.mjs" "$ROOT/server/auth.mjs" "$ROOT/server/index.mjs"
   "$ROOT/server/reset-password.mjs" "$NAS:$APP_HOST_DIR/"
 
 echo "==> 2/4 准备数据目录"
-ssh "$NAS" "mkdir -p /vol1/1000/Docker/Data/garden"
+ssh "$NAS" "mkdir -p /vol1/1000/Docker/garden/data"
 
 echo "==> 3/4 检查 Nginx 的 /api/ 反代（缺失或目标不符直接失败，避免部署后接口 404）"
 if ! ssh "$NAS" "grep -q 'location /api/' $NGINX_CONF"; then
@@ -29,7 +29,7 @@ if ! ssh "$NAS" "grep -q 'garden-api:8787' $NGINX_CONF"; then
 fi
 echo "    已存在且目标正确"
 
-echo "==> 4/4 在 NAS 上启动容器并重载 Nginx（会提示输入 sudo 密码）"
+echo "==> 4/4 在 NAS 上启动容器并重载 Nginx（使用已有 Docker 权限）"
 scp -q "$ROOT/deploy/remote-garden-setup.sh" "$NAS:$APP_HOST_DIR/remote-garden-setup.sh"
 scp -q "$ROOT/deploy/reset-garden-password.sh" "$NAS:$APP_HOST_DIR/reset-garden-password.sh"
 ssh -t "$NAS" "bash $APP_HOST_DIR/remote-garden-setup.sh"

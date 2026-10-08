@@ -8,7 +8,7 @@
 #
 # 在 Mac 上执行会自动 SSH 到 NAS（沿用 deploy-garden.sh 的 fnos 别名）；
 # 在 NAS 本机执行则直接用容器。可用环境变量覆盖：
-#   NAS=fnos  CONTAINER=garden-api  APP_HOST_DIR=/vol1/1000/Docker/garden-server
+#   NAS=fnos  CONTAINER=garden-api  APP_HOST_DIR=/vol1/1000/Docker/garden/backend
 #   SUDO=sudo（以 root 运行时留空）  DOCKER=docker
 #
 # 重要：重置后**必须重启后端**（服务把 users.json 缓存在内存里，不重启仍是旧密码）。
@@ -16,7 +16,7 @@ set -euo pipefail
 
 NAS=${NAS:-fnos}
 CONTAINER=${CONTAINER:-garden-api}
-APP_HOST_DIR=${APP_HOST_DIR:-/vol1/1000/Docker/garden-server}
+APP_HOST_DIR=${APP_HOST_DIR:-/vol1/1000/Docker/garden/backend}
 REMOTE_SCRIPT="$APP_HOST_DIR/reset-password.mjs"
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 # 以 root 运行时把 SUDO 设为空即可（SUDO= ./deploy/reset-garden-password.sh <用户名>）。
