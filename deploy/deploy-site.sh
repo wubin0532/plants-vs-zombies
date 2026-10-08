@@ -26,7 +26,7 @@ echo "==> 3/4 上传 dist/（解包进现有目录，保留 bind mount 的 inode
 COPYFILE_DISABLE=1 tar --no-mac-metadata --no-xattrs -czf - -C "$ROOT/dist" . |
   ssh "$NAS" "tar xzf - -C $SITE_HOST_DIR"
 
-echo "==> 4/4 校验：入口文件与本地一致，且能通过 Nginx 取到，接口健康"
+echo "==> 4/4 校验：版本号与入口文件一致，且能通过 Nginx 取到，接口健康"
 ENTRY=$(grep -o 'assets/index-[A-Za-z0-9_-]*\.js' "$ROOT/dist/index.html" | head -1)
 if [ -z "$ENTRY" ]; then
   echo "    本地 dist/index.html 里找不到入口 JS"
@@ -37,6 +37,15 @@ if [ "$ENTRY" != "$REMOTE_ENTRY" ]; then
   echo "    入口文件不一致：本地 $ENTRY / NAS $REMOTE_ENTRY"
   exit 1
 fi
+LOCAL_VERSION=$(grep -o 'name="app-version" content="[^"]*"' "$ROOT/dist/index.html" |
+  head -1 | sed 's/.*content="//; s/"$//')
+REMOTE_VERSION=$(ssh "$NAS" "grep -o 'name=\"app-version\" content=\"[^\"]*\"' $SITE_HOST_DIR/index.html | head -1" |
+  sed 's/.*content="//; s/"$//')
+if [ -z "$LOCAL_VERSION" ] || [ "$LOCAL_VERSION" != "$REMOTE_VERSION" ]; then
+  echo "    版本号不一致：本地 [$LOCAL_VERSION] / NAS [$REMOTE_VERSION]"
+  exit 1
+fi
+echo "    发布版本：$LOCAL_VERSION"
 curl -fsS -o /dev/null -w "    $ENTRY → HTTP %{http_code}\n" \
   "http://$GAME_HOST:$GAME_PORT/$ENTRY"
 curl -fsS "http://$GAME_HOST:$GAME_PORT/api/health"

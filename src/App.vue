@@ -48,6 +48,7 @@ import {
   useSave,
 } from "./store";
 import { useAuth } from "./auth";
+import { seedHotkeyIndex, seedHotkeyLabel } from "./hotkeys";
 import {
   ACTIVE_PROFILE_KEY,
   GUEST_PROFILE,
@@ -181,6 +182,9 @@ const available = computed(() =>
 );
 // 卡槽只由商店扩容决定：基础 6，最多 10（规则方案 A，不再随章节免费增加）。
 const slots = computed(() => totalSeedSlots(save.data.seedSlots));
+// 版本号：构建期由 vite.config.ts 从 package.json 注入（见 src/version.ts）。
+const appVersion = __APP_VERSION__;
+const buildId = __BUILD_ID__;
 const garden = computed(() => gardenImage(level.value.scene));
 const levelHint = computed(() => {
   const l = level.value;
@@ -1161,9 +1165,10 @@ function keyboard(e: KeyboardEvent) {
       engine.value.say("再按一次 R 重新开始本关");
     }
   }
-  if (/^[0-9]$/.test(e.key)) {
+  const hotkeyIndex = seedHotkeyIndex(e.key);
+  if (hotkeyIndex >= 0) {
     const ids = engine.value?.isBelt ? stats.value.belt : battleCards.value;
-    const id = ids[e.key === "0" ? 9 : Number(e.key) - 1];
+    const id = ids[hotkeyIndex];
     if (id) selectSeed(id);
   }
 }
@@ -1762,7 +1767,7 @@ onBeforeUnmount(() => {
                 :aria-label="'选择' + seedName(id)"
                 :aria-pressed="stats.selected === id"
               >
-                <span class="key">{{ (i + 1) % 10 }}</span
+                <span class="key">{{ seedHotkeyLabel(i) }}</span
                 ><img
                   class="anchor-img"
                   draggable="false"
@@ -2071,7 +2076,7 @@ onBeforeUnmount(() => {
         </div>
         <p class="keyboard-hint">
           点击种子，再点击草坪种植 · 按住 Shift 连种 · 点击阳光收集 ·
-          空格暂停 · F 键全屏 · 数字键选卡 · 方向键移动光标 · 回车种植 · S 键切换铲子 · 连按两次 R 重开本关
+          空格暂停 · F 键全屏 · 数字键 1-9/0 选卡（卡面左上角编号）· 方向键移动光标 · 回车种植 · S 键切换铲子 · 连按两次 R 重开本关
         </p>
       </template>
     </main>
@@ -2094,7 +2099,7 @@ onBeforeUnmount(() => {
     </div>
     <footer>
       <span>一方小院，一场大冒险。</span
-      ><span>Vue 3 <i>·</i> Phaser 3 <i>·</i> 本地保存</span>
+      ><span :title="'构建 ' + buildId">{{ appVersion }} <i>·</i> Vue 3 <i>·</i> Phaser 3 <i>·</i> 本地保存</span>
     </footer>
     <div v-if="modal" class="modal-backdrop" @click.self="modal = ''">
       <section
@@ -2383,6 +2388,13 @@ onBeforeUnmount(() => {
                 ><span class="pill">{{
                   auth.loggedIn ? "已接入账号" : "保存在本机"
                 }}</span>
+              </div>
+              <div class="setting-row">
+                <span
+                  >游戏版本<small
+                    >构建 {{ buildId }} · 发版记录见 CHANGELOG.md</small
+                  ></span
+                ><span class="pill">{{ appVersion }}</span>
               </div>
               <p class="hint">
                 进度保存在当前浏览器中。清除网站数据或更换设备前，请先导出备份。进行中的战局不会保存。

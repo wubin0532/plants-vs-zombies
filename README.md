@@ -65,7 +65,7 @@ Nginx runs in a container and the `garden-api` backend in its own container; bot
    }
    ```
 
-4. Verify: `curl http://192.168.199.5:5888/api/health` should return `{"ok":true,"users":0,"maxUsers":5}`. The deploy script fails outright if the proxy block is missing or does not target `garden-api:8787`, and exits non-zero on a failed health check.
+4. Verify: `curl http://192.168.199.5:5888/api/health` should return `{"ok":true,"version":"1.0.0","users":0,"maxUsers":5}`. The deploy script fails outright if the proxy block is missing or does not target `garden-api:8787`, and exits non-zero on a failed health check.
 
 > **Upgrading from the old topology (host port 8787)**: run once on the NAS
 > `sudo bash /vol1/1000/Docker/garden/backend/migrate-garden-net.sh`.
@@ -109,11 +109,15 @@ Progress is preserved because the save file is named after `user.id`; this diffe
 
 `deploy/docker-compose.garden.yml` provides an equivalent compose setup (external network `garden-net`, running as `1000:1001`) for merging into existing orchestration; `deploy/nginx.conf` is a pure-static deployment example with security response headers and cache policies split between hashed and fixed-name assets.
 
+## Versioning
+
+`package.json`'s `version` is the single source; `src/version.ts` turns it into the display string (`1.0.0` → `V1.0`). The number is baked into the build and shows up in four places: the page footer, Settings → Account & Save, the boot `console.info` line, and `<meta name="app-version">`; the backend reports the same version from `GET /api/health`, and `deploy/deploy-site.sh` refuses to finish if the version it uploaded is not the one Nginx serves. Release steps and the per-version notes live in [CHANGELOG.md](CHANGELOG.md) (current: **V1.0**).
+
 ## Controls
 
 - After picking cards and entering a level, click a seed, then click a tile to plant.
 - Click to collect sun; click the shovel, then a plant to remove it.
-- Number keys 1–9 select seeds, S toggles the shovel, Esc cancels selection, Space pauses.
+- Each plant card shows its hotkey in the top-left corner: number keys 1–9 and 0 pick cards (0 = the 10th slot), S toggles the shovel, Esc cancels selection, Space pauses. The badge stays visible in the compact fullscreen/immersive tray too.
 - The game auto-pauses when switched to the background. In fullscreen battles the seed bar floats over the left margin of the board, and progress/timer collapse into a thin top bar ("take a break" only shows while paused). Portrait phones get a rotation guide (skippable); on iPhone, "Add to Home Screen" opens a standalone window without the address bar; in standalone mode the home page's top bar clears the status bar and sticks to the top; a phone in landscape enters battle fullscreen automatically (after a manual exit it stays windowed for that landscape orientation until you rotate back or start a new battle).
 - Conveyor belt: planting is free; in bowling, nuts roll to attack; in vasebreaking, click the vases directly; in zombatar levels, click the zombies directly.
 - When the Cob Cannon is ready, click the cannon, then click the target tile to fire.

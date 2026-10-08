@@ -1006,12 +1006,18 @@ footer i {
   font-size: 10px;
   margin-top: 2px;
 }
+/* 卡面左上角的键位编号：它同时是键盘选卡的提示（1..9、0），
+   所以在所有布局（含全屏沉浸式的紧凑卡）都要可读——底衬保证压在植物图上也不糊。 */
 .battle-seed .key {
   position: absolute;
   top: 1px;
-  left: 4px;
+  left: 2px;
   font-size: 10px;
-  color: #626c49;
+  line-height: 1.15;
+  color: #4d5738;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: #fbfbecd9;
 }
 .battle-seed.unavailable {
   filter: saturate(0.55);
@@ -2659,8 +2665,12 @@ body.font-large .in-game .modal {
     height: 60px;
     flex: none;
   }
+  /* 紧凑卡里编号缩小但仍显示：没有它键盘选卡只能靠猜。 */
   .battle-seed .key {
-    display: none;
+    top: 0;
+    left: 1px;
+    font-size: 9px;
+    padding: 0 2px;
   }
   .battle-seed img {
     height: 32px;
@@ -2986,7 +2996,10 @@ body.battle-fullscreen {
   font-size: 10px;
 }
 .immersive .battle-seed .key {
-  display: none;
+  top: 0;
+  left: 1px;
+  font-size: 9px;
+  padding: 0 2px;
 }
 .immersive .shovel {
   flex: 0 0 35px;
@@ -3484,7 +3497,7 @@ body.battle-fullscreen {
 .immersive .battle-seed img { width: 34px; height: 29px; object-fit: contain; }
 .immersive .battle-seed > span:not(.key),
 .immersive .battle-seed strong { font-size: 9px; line-height: 1; margin: 0; }
-.immersive .battle-seed .key { display: none; }
+.immersive .battle-seed .key { top: 0; left: 1px; font-size: 9px; padding: 0 2px; }
 .immersive .shovel {
   flex: 0 0 38px;
   width: 100%;

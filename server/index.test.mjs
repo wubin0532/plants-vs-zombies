@@ -117,6 +117,14 @@ describe('garden-api · 账号与会话', () => {
   const bob = 'bob_' + suffix;
   const ip = function (n) { return '198.51.100.' + n; };
 
+  it('/api/health 上报版本号，且与 package.json 一致', async () => {
+    const response = await fetch(main.base + '/api/health');
+    const health = await response.json();
+    const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+    expect(health.version).toBe(pkg.version);
+    expect(health.version).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
   it('注册后可读取当前用户，未登录返回 401', async () => {
     const response = await client.post('/api/auth/register', { username: alice, password: '12345678' }, null, { 'X-Real-IP': ip(1) });
     expect(response.status).toBe(200);

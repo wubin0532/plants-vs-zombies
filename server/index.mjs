@@ -65,6 +65,9 @@ function intEnv(name, fallback, minimum = 1) {
 
 const PORT = intEnv('PORT', 8787, 0);
 const HOST = process.env.HOST || '0.0.0.0';
+// 产品版本号（规范 semver）：与 package.json 保持一致，tests 与 /api/health 都会校验，
+// 部署后可直接用 `curl /api/health` 确认后端是哪一版。
+const APP_VERSION = '1.0.0';
 const COOKIE_NAME = 'pvz_session';
 const COOKIE_SECURE = process.env.COOKIE_SECURE === '1';
 // 仅当本服务只被受信反向代理访问时开启；开启后按 X-Real-IP（代理覆盖写）计数。
@@ -345,7 +348,12 @@ async function route(req, res) {
 
   if (pathname === '/api/health' && method === 'GET') {
     const users = await loadUsers();
-    return send(res, 200, { ok: true, users: users.length, maxUsers: maxUsers() });
+    return send(res, 200, {
+      ok: true,
+      version: APP_VERSION,
+      users: users.length,
+      maxUsers: maxUsers(),
+    });
   }
 
   if (pathname === '/api/auth/register' && method === 'POST') {

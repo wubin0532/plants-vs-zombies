@@ -24,18 +24,21 @@ describe("花盆按容器尺寸显示，盆栽植物抬到盆口", () => {
   });
 });
 
-describe("5-1 给花盆，5-2 给卷心菜投手", () => {
-  it("解锁顺序对齐原版", () => {
+describe("5-1 同时给花盆与卷心菜投手", () => {
+  it("两块卡都在 5-1 解锁", () => {
     expect(plantById.pot.unlock).toBe(41);
-    expect(plantById.cabbage.unlock).toBe(42);
+    expect(plantById.cabbage.unlock).toBe(41);
   });
 
-  it("5-1 能选到花盆，推荐阵容同时有底座与可用火力", () => {
+  it("5-1 能选到花盆与投手，推荐阵容带投手越过斜坡", () => {
     const unlocked = plants.filter((p) => p.unlock <= 41).map((p) => p.id);
     expect(unlocked).toContain("pot");
-    expect(unlocked).not.toContain("cabbage");
+    expect(unlocked).toContain("cabbage");
     const rec = recommendCards(levels[40], unlocked, 6);
     expect(rec).toContain("pot");
+    // 卷心菜是可用的投手：坡上的直射打不到屋脊外，投手才是 5-1 的越坡火力。
+    expect(rec).toContain("cabbage");
+    expect(plantById.cabbage.kind).toBe("lob");
     expect(
       rec.some((id) =>
         [
